@@ -1,131 +1,131 @@
-# Local LLM Setup — Gemma 4 12B QAT on Mac mini M4 16GB
+# Local LLM Setup - Gemma 4 E2B QAT on Mac mini M4 16GB
 
-> **Final engine:** llama.cpp with `unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL`
-> **Hardware:** Mac mini M4, 16 GB unified memory
+Current local model: `unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL`
+
+Use case: local chat and lightweight classification. This setup is not intended to replace the main coding model.
+
+Hardware: Mac mini M4, 16 GB unified memory.
 
 ---
 
 ## Quick Start
 
-```bash
-# Install
-brew install llama.cpp
+Install llama.cpp:
 
-# Run server (auto-downloads model on first run)
+```bash
+brew install llama.cpp
+```
+
+Start the best known local server:
+
+```bash
+./best_command.sh
+```
+
+The server listens on:
+
+```text
+http://127.0.0.1:8080/v1
+```
+
+Test it:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemma-qat","messages":[{"role":"user","content":"Classify this as casual_chat, task_request, bug_report, or unknown: my local model is slow"}],"max_tokens":100}'
+```
+
+---
+
+## Best Command
+
+`best_command.sh` currently runs:
+
+```bash
 llama-server \
-  -hf unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL \
+  -hf unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL \
+  --alias gemma-qat \
   --no-mmproj \
   --reasoning off \
   --temp 0.8 \
   --top-p 0.95 \
   --top-k 64 \
   --ctx-size 32768 \
-  --tools all
-
-# Test
-curl -s http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"default","messages":[{"role":"user","content":"Say hello"}],"max_tokens":50}'
+  --port 8080 \
+  --tools all \
+  --parallel 1
 ```
+
+Keep that terminal running while using the local model.
 
 ---
 
-## What We Tried
+## OpenCode Provider
 
-| Model | Engine | Size | Gen Speed | Prompt Speed | Result |
-|---|---|---|---|---|---|
-| Qwen3.6-35B-A3B Q2_K_XL | llama.cpp | 11 GB | — | — | ❌ **OOM** |
-| Qwen3.6-35B-A3B IP2_XXS | llama.cpp | 10.8 GB | **27.9 tok/s** | — | ✅ Fast MoE, tight ctx |
-| Gemma-4-12B Q2_K_XL | llama.cpp | 4.66 GB | 13.44 tok/s | 124.7 tok/s | ⚠️ Fuzzy quality |
-| **Gemma-4-12B QAT Q4_K_XL** | **llama.cpp** | **6.72 GB** | **12.08 tok/s** | **132.4 tok/s** | **✅ Best quality** |
-| Gemma-4-12B QAT 4-bit | Rapid-MLX | 15.4 GB ws | 6.2 tok/s | — | ❌ Memory panic |
-| Gemma-4-12B QAT 4-bit | mlx-vlm | 11.1 GB | 11.7 tok/s | 2.2 tok/s | ⚠️ Same speed, more RAM |
-| Gemma-4-12B QAT 4-bit | mlx-lm | — | — | — | ❌ Arch not supported |
-
-**Why not MLX?** Gemma 4's `gemma4_unified` architecture lacks a lean text-only path in the MLX ecosystem. llama.cpp's `--no-mmproj` cleanly drops vision weights, saving ~4 GB vs MLX. On 16 GB, that headroom makes the difference.
-
----
-
-## Performance
-
-| Metric | Value |
-|---|---|
-| Generation speed | **12.08 tok/s** |
-| Prompt processing | **132.4 tok/s** |
-| Model size | 6.72 GB (GGUF UD-Q4_K_XL) |
-| Total RAM at load | ~7 GB (text-only, `--no-mmproj`) |
-| Context | 32768 tokens |
-| Opencode overhead | ~15K system prompt → ~17K usable |
-
----
-
-## Benchmark Optimization
-
-Run the automated llama.cpp benchmark suite with uv:
-
-```bash
-uv run python scripts/benchmark_gemma_qat.py
-```
-
-Useful options:
-
-```bash
-uv run python scripts/benchmark_gemma_qat.py --only e4b-q4-32k
-uv run python scripts/benchmark_gemma_qat.py --only e2b-q4-32k --only e4b-q4-32k
-uv run python scripts/benchmark_gemma_qat.py --kill-existing
-uv run python scripts/benchmark_gemma_qat.py --startup-timeout 900
-```
-
-The script checks `llama-server`, port availability, and existing llama-server processes. Logs and response JSON files are written to `logs/llama-bench/<timestamp>/`, including `summary.md` and `summary.json`.
-
-The optimization loop is documented in `OPTIMIZATION_PROTOCOL.md`. The script also maintains:
-
-- `benchmark_results.md` — cumulative experiment table.
-- `optimization_memory.md` — current best, patterns, failures, and next hypothesis.
-- `best_command.sh` — best known command, updated only after a meaningful improvement.
-
-By default, variants already recorded in `benchmark_results.md` are skipped. Use `--repeat` only when you intentionally want to rerun an experiment.
-
-Current cross-model variants include the confirmed 12B Q4 baseline plus E2B/E4B Q4 and Q2 GGUF candidates. The benchmark prompt is tuned for the intended local use case: chat and lightweight classification, not coding. The 26B A4B MoE is intentionally excluded because its 14.2 GB GGUF leaves too little headroom on a 16 GB Mac mini.
-
-On the current Apple Metal llama.cpp build, E2B/E4B `UD-Q2_K_XL` fail during warmup with `metal_unsupported_quant_type_35`. Treat E2B Q4 as the fastest viable model and E4B Q4 as the quality/speed compromise candidate.
-
-To use the local `llama.cpp/gemma-qat` opencode provider, start the server first:
-
-```bash
-./best_command.sh
-```
-
-Then restart opencode and select/use:
+The global opencode config has a local `llama.cpp` provider:
 
 ```text
 llama.cpp/gemma-qat
 ```
 
-The provider expects `llama-server` at `http://127.0.0.1:8080/v1`, so keep that terminal running while using the local model.
+The provider expects `llama-server` at `http://127.0.0.1:8080/v1`. It does not start the server automatically.
+
+After changing opencode config, restart opencode. Running sessions keep using the already-loaded config.
 
 ---
 
-## Opencode Integration (Next)
+## Benchmark Results
 
-Add this to your `opencode.json`:
+| Variant | Model | Gen tok/s | Prompt tok/s | Status |
+|---|---|---:|---:|---|
+| `e2b-q4-32k` | Gemma 4 E2B QAT Q4 | 52.7943 | 148.5310 | Best speed candidate |
+| `e4b-q4-32k` | Gemma 4 E4B QAT Q4 | 32.3460 | 92.4689 | Best quality/speed fallback |
+| `12b-q4-32k` | Gemma 4 12B QAT Q4 | 13.5111 | 47.3704 | Quality baseline, too slow for this use case |
+| `e2b-q2-32k` | Gemma 4 E2B QAT Q2 | - | - | Failed on Metal |
+| `e4b-q2-32k` | Gemma 4 E4B QAT Q2 | - | - | Failed on Metal |
 
-```json
-{
-  "provider": {
-    "openai": {
-      "api": "http://localhost:8080/v1",
-      "models": {
-        "default": {
-          "name": "gemma-4-12b-it-qat",
-          "limit": { "context": 32768, "output": 8192 }
-        }
-      },
-      "options": { "apiKey": "not-needed" }
-    }
-  }
-}
+Full history is in `benchmark_results.md`.
+
+---
+
+## Benchmark Automation
+
+Run the benchmark suite with uv:
+
+```bash
+uv run python scripts/benchmark_gemma_qat.py
 ```
+
+Useful commands:
+
+```bash
+uv run python scripts/benchmark_gemma_qat.py --only e2b-q4-32k --repeat
+uv run python scripts/benchmark_gemma_qat.py --only e4b-q4-32k --repeat
+uv run python scripts/benchmark_gemma_qat.py --kill-existing
+uv run python scripts/benchmark_gemma_qat.py --startup-timeout 900
+```
+
+The script checks `llama-server`, port availability, and existing `llama-server` processes. Logs and response JSON files are written to `logs/llama-bench/<timestamp>/`.
+
+The optimization loop uses:
+
+- `OPTIMIZATION_PROTOCOL.md`
+- `benchmark_results.md`
+- `optimization_memory.md`
+- `best_command.sh`
+
+By default, already-recorded variants are skipped. Use `--repeat` only when intentionally rerunning an experiment.
+
+---
+
+## Current Findings
+
+- E2B Q4 is the fastest viable model for local chat/classification.
+- E4B Q4 is the fallback if E2B quality is not enough.
+- Q2 variants fail on this Apple Metal llama.cpp build with `metal_unsupported_quant_type_35`.
+- The 26B A4B MoE is intentionally excluded because its 14.2 GB GGUF leaves too little headroom on a 16 GB Mac mini.
+- Only the E2B Q4 Hugging Face cache is retained locally.
 
 ---
 
@@ -133,16 +133,19 @@ Add this to your `opencode.json`:
 
 | Issue | Cause | Fix |
 |---|---|---|
-| `kIOGPUCommandBufferCallbackErrorOutOfMemory` | Model + KV cache > Metal limit | Lower `--ctx-size` or use smaller quant |
-| Sluggish generation | KV cache too large | Reduce `--ctx-size` to 16384 |
-| Content is null / think tags | Reasoning enabled | Add `--reasoning off` |
-| Multimodal error | Missing projector weights | Add `--no-mmproj` |
-| Deprecated flag | `--chat-template-kwargs` removed | Use `--reasoning on/off` |
+| Provider fails in opencode | `llama-server` is not running | Start `./best_command.sh` first |
+| Model ID error | Server alias mismatch | Use `gemma-qat` for raw API calls and `llama.cpp/gemma-qat` in opencode |
+| Port busy | Another server uses 8080 | Stop it or change both `--port` and provider `baseURL` |
+| Q2 exits during warmup | Metal backend unsupported quant path | Use Q4 variants |
+| Metal OOM | Model + KV cache exceeds available Metal memory | Use E2B Q4 or reduce `--ctx-size` |
 
 ---
 
 ## References
 
-- [llama.cpp](https://github.com/ggerganov/llama.cpp)
-- [unsloth/gemma-4-12B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF)
-- [Unsloth Gemma 4 Docs](https://unsloth.ai/docs/models/gemma-4)
+- [llama.cpp](https://github.com/ggml-org/llama.cpp)
+- [opencode llama.cpp provider docs](https://opencode.ai/docs/providers#llamacpp)
+- [Unsloth Gemma 4 QAT collection](https://huggingface.co/collections/unsloth/gemma-4-qat)
+- [Gemma 4 E2B QAT GGUF](https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF)
+- [Gemma 4 E4B QAT GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF)
+- [Gemma 4 12B QAT GGUF](https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF)
