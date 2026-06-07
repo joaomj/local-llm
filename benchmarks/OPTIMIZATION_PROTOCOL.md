@@ -4,9 +4,9 @@ Before each experiment, read:
 
 - `README.md`
 - `TECH_CONTEXT.md`
-- `benchmark_results.md`
-- `optimization_memory.md`
-- `best_command.sh`
+- `benchmarks/benchmark_results.md`
+- `benchmarks/optimization_memory.md`
+- `run_model.sh`
 - `scripts/benchmark_gemma_qat.py`
 
 Do not repeat experiments unless the previous result was noisy or incomplete.
@@ -31,9 +31,9 @@ For every new experiment, explain:
 
 After each experiment:
 
-- Record results in `benchmark_results.md`.
-- Update `best_command.sh` if performance improves meaningfully without hurting stability or chat/classifier quality.
-- Update `optimization_memory.md` with the best configuration, discovered patterns, failed configurations, and next hypothesis.
+- Record results in `benchmarks/benchmark_results.md`.
+- Update `run_model.sh` if performance improves meaningfully without hurting stability or chat/classifier quality.
+- Update `benchmarks/optimization_memory.md` with the best configuration, discovered patterns, failed configurations, and next hypothesis.
 
 Decision rules:
 

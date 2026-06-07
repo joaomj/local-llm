@@ -56,9 +56,9 @@ class ServerDefaults:
 @dataclass(frozen=True)
 class BenchmarkPaths:
     output_dir: Path = Path("logs") / "llama-bench"
-    benchmark_results: Path = Path("benchmark_results.md")
-    optimization_memory: Path = Path("optimization_memory.md")
-    best_command: Path = Path("best_command.sh")
+    benchmark_results: Path = Path("benchmarks") / "benchmark_results.md"
+    optimization_memory: Path = Path("benchmarks") / "optimization_memory.md"
+    run_model: Path = Path("run_model.sh")
 
 
 @dataclass(frozen=True)
@@ -280,7 +280,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--repeat",
         action="store_true",
-        help="Allow variants already recorded in benchmark_results.md to run again.",
+        help="Allow variants already recorded in benchmarks/benchmark_results.md to run again.",
     )
     return parser.parse_args()
 
@@ -676,12 +676,12 @@ def shell_command(command: list[str]) -> str:
     return " \\\n+  ".join(command)
 
 
-def write_best_command(variant: BenchmarkVariant, logger: logging.Logger) -> None:
+def write_run_model(variant: BenchmarkVariant, logger: logging.Logger) -> None:
     command = " ".join(build_server_command(variant, port=None))
     content = f"#!/usr/bin/env bash\nset -euo pipefail\n\n{command}\n"
-    CONFIG.paths.best_command.write_text(content, encoding="utf-8")
-    CONFIG.paths.best_command.chmod(0o755)
-    logger.info("Updated best command: %s", CONFIG.paths.best_command)
+    CONFIG.paths.run_model.write_text(content, encoding="utf-8")
+    CONFIG.paths.run_model.chmod(0o755)
+    logger.info("Updated run model command: %s", CONFIG.paths.run_model)
 
 
 def update_optimization_memory(
@@ -698,7 +698,7 @@ def update_optimization_memory(
         and best_speed >= previous_best * CONFIG.meaningful_improvement_ratio
     )
     if improved:
-        write_best_command(VARIANTS[best_run.name], logger)
+        write_run_model(VARIANTS[best_run.name], logger)
 
     lines = ["# Optimization Memory", "", "## Best Configuration", ""]
     if improved and best_run is not None and best_speed is not None:

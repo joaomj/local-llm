@@ -19,7 +19,7 @@ brew install llama.cpp
 Start the best known local server:
 
 ```bash
-./best_command.sh
+./run_model.sh
 ```
 
 The server listens on:
@@ -38,13 +38,13 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
 
 ---
 
-## Best Command
+## Run Model
 
-`best_command.sh` currently runs:
+`run_model.sh` currently resolves the locally cached GGUF and runs:
 
 ```bash
 llama-server \
-  -hf unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL \
+  -m ~/.cache/huggingface/hub/models--unsloth--gemma-4-E2B-it-qat-GGUF/snapshots/<snapshot>/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf \
   --alias gemma-qat \
   --no-mmproj \
   --reasoning off \
@@ -85,7 +85,7 @@ After changing opencode config, restart opencode. Running sessions keep using th
 | `e2b-q2-32k` | Gemma 4 E2B QAT Q2 | - | - | Failed on Metal |
 | `e4b-q2-32k` | Gemma 4 E4B QAT Q2 | - | - | Failed on Metal |
 
-Full history is in `benchmark_results.md`.
+Full history is in `benchmarks/benchmark_results.md`.
 
 ---
 
@@ -111,9 +111,9 @@ The script checks `llama-server`, port availability, and existing `llama-server`
 The optimization loop uses:
 
 - `OPTIMIZATION_PROTOCOL.md`
-- `benchmark_results.md`
-- `optimization_memory.md`
-- `best_command.sh`
+- `benchmarks/benchmark_results.md`
+- `benchmarks/optimization_memory.md`
+- `run_model.sh`
 
 By default, already-recorded variants are skipped. Use `--repeat` only when intentionally rerunning an experiment.
 
@@ -133,7 +133,7 @@ By default, already-recorded variants are skipped. Use `--repeat` only when inte
 
 | Issue | Cause | Fix |
 |---|---|---|
-| Provider fails in opencode | `llama-server` is not running | Start `./best_command.sh` first |
+| Provider fails in opencode | `llama-server` is not running | Start `./run_model.sh` first |
 | Model ID error | Server alias mismatch | Use `gemma-qat` for raw API calls and `llama.cpp/gemma-qat` in opencode |
 | Port busy | Another server uses 8080 | Stop it or change both `--port` and provider `baseURL` |
 | Q2 exits during warmup | Metal backend unsupported quant path | Use Q4 variants |

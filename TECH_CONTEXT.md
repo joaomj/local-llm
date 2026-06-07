@@ -55,17 +55,17 @@ E4B Q4 measured 32.3460 generation tok/s and 92.4689 prompt tok/s.
 
 ## Best Server Command
 
-The canonical command is in `best_command.sh`:
+The canonical command is in `run_model.sh`:
 
 ```bash
-./best_command.sh
+./run_model.sh
 ```
 
-Expanded command:
+Expanded command shape:
 
 ```bash
 llama-server \
-  -hf unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL \
+  -m ~/.cache/huggingface/hub/models--unsloth--gemma-4-E2B-it-qat-GGUF/snapshots/<snapshot>/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf \
   --alias gemma-qat \
   --no-mmproj \
   --reasoning off \
@@ -123,7 +123,7 @@ Provider shape follows the official llama.cpp provider docs:
 }
 ```
 
-The provider does not start `llama-server`. Start `./best_command.sh` first, then restart opencode.
+The provider does not start `llama-server`. Start `./run_model.sh` first, then restart opencode.
 
 ---
 
@@ -137,7 +137,7 @@ The provider does not start `llama-server`. Start `./best_command.sh` first, the
 | `e2b-q2-32k` | E2B Q2 | - | - | Failed on Metal |
 | `e4b-q2-32k` | E4B Q2 | - | - | Failed on Metal |
 
-Full cumulative data is in `benchmark_results.md`.
+Full cumulative data is in `benchmarks/benchmark_results.md`.
 
 ---
 
@@ -205,9 +205,9 @@ The script:
 - Checks port availability.
 - Starts one variant at a time.
 - Writes server logs and response JSON to `logs/llama-bench/<timestamp>/`.
-- Appends cumulative results to `benchmark_results.md`.
-- Updates `optimization_memory.md`.
-- Updates `best_command.sh` only after a meaningful improvement.
+- Appends cumulative results to `benchmarks/benchmark_results.md`.
+- Updates `benchmarks/optimization_memory.md`.
+- Updates `run_model.sh` only after a meaningful improvement.
 
 ---
 
@@ -218,9 +218,9 @@ The script:
 | `README.md` | User-facing quick start and current summary |
 | `TECH_CONTEXT.md` | Technical state and rationale |
 | `OPTIMIZATION_PROTOCOL.md` | Rules for future optimization experiments |
-| `benchmark_results.md` | Cumulative benchmark table |
-| `optimization_memory.md` | Current best, failures, and next hypothesis |
-| `best_command.sh` | Canonical server startup command |
+| `benchmarks/benchmark_results.md` | Cumulative benchmark table |
+| `benchmarks/optimization_memory.md` | Current best, failures, and next hypothesis |
+| `run_model.sh` | Canonical server startup command |
 | `scripts/benchmark_gemma_qat.py` | Benchmark automation script |
 | `qat-chat.json` | Historical 12B QAT sample |
 | `gemma-q2-chat.json` | Historical 12B Q2 sample |
