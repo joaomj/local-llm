@@ -2,13 +2,16 @@
 
 ## Best Configuration
 
-Current best remains the previously recorded configuration at 52.7943 tok/s.
-Best speed candidate: `e2b-q4-32k`.
+Current best: `e2b-q4-32k` at 52.7943 generation tok/s and 148.5310 prompt tok/s.
 
 Best quality/speed compromise candidate: `e4b-q4-32k` if E2B quality is insufficient.
 
-## Latest Run Patterns
+## Discovered Patterns
 
+- E2B Q4 is the fastest viable model for local chat/classification.
+- E4B Q4 is the fallback if E2B quality is insufficient.
+- 12B Q4 works but is much slower than needed for this use case.
+- `--parallel 1` is the preferred single-user setting.
 
 ## Failed Or Lower-Performing Configurations
 
