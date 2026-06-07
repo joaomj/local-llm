@@ -59,6 +59,39 @@ curl -s http://localhost:8080/v1/chat/completions \
 
 ---
 
+## Benchmark Optimization
+
+Run the automated llama.cpp benchmark suite with uv:
+
+```bash
+uv run python scripts/benchmark_gemma_qat.py
+```
+
+Useful options:
+
+```bash
+uv run python scripts/benchmark_gemma_qat.py --only e4b-q4-32k
+uv run python scripts/benchmark_gemma_qat.py --only e2b-q4-32k --only e4b-q4-32k
+uv run python scripts/benchmark_gemma_qat.py --kill-existing
+uv run python scripts/benchmark_gemma_qat.py --startup-timeout 900
+```
+
+The script checks `llama-server`, port availability, and existing llama-server processes. Logs and response JSON files are written to `logs/llama-bench/<timestamp>/`, including `summary.md` and `summary.json`.
+
+The optimization loop is documented in `OPTIMIZATION_PROTOCOL.md`. The script also maintains:
+
+- `benchmark_results.md` — cumulative experiment table.
+- `optimization_memory.md` — current best, patterns, failures, and next hypothesis.
+- `best_command.sh` — best known command, updated only after a meaningful improvement.
+
+By default, variants already recorded in `benchmark_results.md` are skipped. Use `--repeat` only when you intentionally want to rerun an experiment.
+
+Current cross-model variants include the confirmed 12B Q4 baseline plus E2B/E4B Q4 and Q2 GGUF candidates. The benchmark prompt is tuned for the intended local use case: chat and lightweight classification, not coding. The 26B A4B MoE is intentionally excluded because its 14.2 GB GGUF leaves too little headroom on a 16 GB Mac mini.
+
+On the current Apple Metal llama.cpp build, E2B/E4B `UD-Q2_K_XL` fail during warmup with `metal_unsupported_quant_type_35`. Treat E2B Q4 as the fastest viable model and E4B Q4 as the quality/speed compromise candidate.
+
+---
+
 ## Opencode Integration (Next)
 
 Add this to your `opencode.json`:
