@@ -72,7 +72,7 @@ llama-server \
   --temp 0.8 \
   --top-p 0.95 \
   --top-k 64 \
-  --ctx-size 32768 \
+  --ctx-size 131072 \
   --port 8080 \
   --tools all \
   --parallel 1

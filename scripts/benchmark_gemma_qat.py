@@ -31,7 +31,7 @@ class ServerDefaults:
     process_shutdown_timeout_seconds: int = 30
     process_exit_timeout_seconds: int = 30
     process_poll_interval_seconds: int = 1
-    ctx_size: int = 32768
+    ctx_size: int = 131072
     reduced_ctx_size: int = 16384
     parallel: int = 1
     threads_6: int = 6
