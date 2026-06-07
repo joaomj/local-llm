@@ -11,7 +11,7 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,8 +28,15 @@ class ServerDefaults:
     readiness_interval_seconds: int = 5
     post_start_grace_seconds: int = 2
     poll_timeout_seconds: int = 5
+    process_shutdown_timeout_seconds: int = 30
+    process_exit_timeout_seconds: int = 30
+    process_poll_interval_seconds: int = 1
     ctx_size: int = 32768
+    reduced_ctx_size: int = 16384
     parallel: int = 1
+    threads_6: int = 6
+    threads_8: int = 8
+    disabled_cache_ram: int = 0
     temperature: str = "0.8"
     top_p: str = "0.95"
     top_k: str = "64"
@@ -39,6 +46,11 @@ class ServerDefaults:
         "or unknown. Then briefly explain the label: 'My local model is slow after I "
         "increase the context window.'"
     )
+    ready_endpoint: str = "/v1/models"
+    completion_endpoint: str = "/v1/chat/completions"
+    host: str = "127.0.0.1"
+    content_type_header: str = "Content-Type"
+    json_content_type: str = "application/json"
 
 
 @dataclass(frozen=True)
@@ -60,10 +72,19 @@ class ModelRepos:
 
 @dataclass(frozen=True)
 class BenchmarkConfig:
-    server: ServerDefaults = ServerDefaults()
-    paths: BenchmarkPaths = BenchmarkPaths()
-    models: ModelRepos = ModelRepos()
+    server: ServerDefaults = field(default_factory=ServerDefaults)
+    paths: BenchmarkPaths = field(default_factory=BenchmarkPaths)
+    models: ModelRepos = field(default_factory=ModelRepos)
     meaningful_improvement_ratio: float = 1.02
+    success_status: str = "ok"
+    failed_status: str = "failed"
+    benchmark_header_columns: int = 9
+    legacy_benchmark_header_columns: int = 8
+    markdown_table_prefix: str = "| "
+    timestamp_format: str = "%Y-%m-%d %H:%M:%S"
+    run_dir_timestamp_format: str = "%Y%m%d-%H%M%S"
+    server_log_suffix: str = ".server.log"
+    response_suffix: str = ".response.json"
 
 
 CONFIG = BenchmarkConfig()
@@ -157,7 +178,7 @@ VARIANTS = {
     "flash-attn-16k": BenchmarkVariant(
         "flash-attn-16k",
         model_repo=CONFIG.models.gemma_12b_q4,
-        ctx_size=16384,
+        ctx_size=CONFIG.server.reduced_ctx_size,
         flash_attn="on",
         hypothesis="Test whether smaller context helps with flash attention enabled.",
         expected_improvement="Potential lower KV/cache pressure.",
@@ -175,7 +196,7 @@ VARIANTS = {
         model_repo=CONFIG.models.gemma_12b_q4,
         ctx_size=CONFIG.server.ctx_size,
         parallel=CONFIG.server.parallel,
-        threads=6,
+        threads=CONFIG.server.threads_6,
         hypothesis="After --parallel 1, test whether more CPU threads help CPU-side work.",
         expected_improvement="Slightly better prompt or generation throughput on M4.",
     ),
@@ -184,7 +205,7 @@ VARIANTS = {
         model_repo=CONFIG.models.gemma_12b_q4,
         ctx_size=CONFIG.server.ctx_size,
         parallel=CONFIG.server.parallel,
-        threads=8,
+        threads=CONFIG.server.threads_8,
         hypothesis="Compare heavier CPU thread usage against the 6-thread variant.",
         expected_improvement="Find whether additional M4 cores improve or hurt throughput.",
     ),
@@ -192,7 +213,7 @@ VARIANTS = {
         "cache-ram-0-32k",
         model_repo=CONFIG.models.gemma_12b_q4,
         ctx_size=CONFIG.server.ctx_size,
-        cache_ram=0,
+        cache_ram=CONFIG.server.disabled_cache_ram,
         hypothesis="Prompt cache may add memory overhead for local single-user benchmark runs.",
         expected_improvement="Lower memory pressure without harming generation speed.",
     ),
@@ -201,6 +222,10 @@ VARIANTS = {
 
 class BenchmarkError(RuntimeError):
     """Raised when benchmark setup or execution fails."""
+
+
+def local_url(port: int, endpoint: str) -> str:
+    return f"http://{CONFIG.server.host}:{port}{endpoint}"
 
 
 def classify_server_failure(server_log_path: Path) -> FailureClassification | None:
@@ -316,11 +341,11 @@ def kill_processes(processes: list[tuple[int, str]], logger: logging.Logger) -> 
             )
         except subprocess.TimeoutExpired as exc:
             raise BenchmarkError(f"Timed out terminating existing llama-server pid={pid}") from exc
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + CONFIG.server.process_exit_timeout_seconds
     while time.monotonic() < deadline:
         if not find_llama_server_processes():
             return
-        time.sleep(1)
+        time.sleep(CONFIG.server.process_poll_interval_seconds)
     raise BenchmarkError("Existing llama-server processes did not exit after SIGTERM")
 
 
@@ -328,7 +353,7 @@ def is_port_available(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            sock.bind(("127.0.0.1", port))
+            sock.bind((CONFIG.server.host, port))
         except OSError:
             return False
     return True
@@ -396,7 +421,7 @@ def build_server_command(variant: BenchmarkVariant, port: int | None) -> list[st
 
 def wait_for_server(port: int, process: subprocess.Popen[bytes], timeout: int) -> None:
     deadline = time.monotonic() + timeout
-    url = f"http://127.0.0.1:{port}/v1/models"
+    url = local_url(port, CONFIG.server.ready_endpoint)
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise BenchmarkError(f"llama-server exited early with code {process.returncode}")
@@ -418,9 +443,9 @@ def request_completion(port: int, timeout: int) -> dict[str, Any]:
         "max_tokens": CONFIG.server.max_tokens,
     }
     request = Request(
-        f"http://127.0.0.1:{port}/v1/chat/completions",
+        local_url(port, CONFIG.server.completion_endpoint),
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={CONFIG.server.content_type_header: CONFIG.server.json_content_type},
         method="POST",
     )
     try:
@@ -451,11 +476,11 @@ def terminate_started_server(process: subprocess.Popen[bytes], logger: logging.L
     logger.info("Stopping llama-server pid=%s", process.pid)
     process.terminate()
     try:
-        process.wait(timeout=30)
+        process.wait(timeout=CONFIG.server.process_shutdown_timeout_seconds)
     except subprocess.TimeoutExpired:
         logger.warning("llama-server did not stop after SIGTERM; sending SIGKILL")
         process.kill()
-        process.wait(timeout=30)
+        process.wait(timeout=CONFIG.server.process_shutdown_timeout_seconds)
 
 
 def run_variant(
@@ -464,8 +489,8 @@ def run_variant(
     run_dir: Path,
     logger: logging.Logger,
 ) -> BenchmarkResult:
-    server_log_path = run_dir / f"{variant.name}.server.log"
-    response_path = run_dir / f"{variant.name}.response.json"
+    server_log_path = run_dir / f"{variant.name}{CONFIG.server_log_suffix}"
+    response_path = run_dir / f"{variant.name}{CONFIG.response_suffix}"
     command = build_server_command(variant, args.port)
     logger.info("Starting variant=%s command=%s", variant.name, " ".join(command))
     with server_log_path.open("wb") as server_log:
@@ -478,7 +503,14 @@ def run_variant(
             response_path.write_text(json.dumps(response, indent=2), encoding="utf-8")
             timings = extract_timings(response)
             logger.info("Completed variant=%s timings=%s", variant.name, json.dumps(timings))
-            return BenchmarkResult(variant.name, "ok", str(response_path), str(server_log_path), timings, None)
+            return BenchmarkResult(
+                variant.name,
+                CONFIG.success_status,
+                str(response_path),
+                str(server_log_path),
+                timings,
+                None,
+            )
         except BenchmarkError as exc:
             classification = classify_server_failure(server_log_path)
             error = str(exc)
@@ -487,7 +519,7 @@ def run_variant(
             logger.exception("Variant failed: %s", variant.name)
             return BenchmarkResult(
                 variant.name,
-                "failed",
+                CONFIG.failed_status,
                 str(response_path) if response_path.exists() else None,
                 str(server_log_path),
                 None,
@@ -512,12 +544,20 @@ def read_recorded_variants() -> set[str]:
         return set()
     recorded: set[str] = set()
     for line in CONFIG.paths.benchmark_results.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("| ") or line.startswith("| Timestamp") or line.startswith("|---"):
+        if not is_benchmark_row(line):
             continue
         parts = [part.strip() for part in line.strip("|").split("|")]
         if len(parts) >= 2:
             recorded.add(parts[1])
     return recorded
+
+
+def is_benchmark_row(line: str) -> bool:
+    return (
+        line.startswith(CONFIG.markdown_table_prefix)
+        and not line.startswith("| Timestamp")
+        and not line.startswith("|---")
+    )
 
 
 def select_variants(args: argparse.Namespace, logger: logging.Logger) -> list[str]:
@@ -544,22 +584,23 @@ def best_recorded_speed() -> float | None:
         return None
     best: float | None = None
     for line in CONFIG.paths.benchmark_results.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("| ") or line.startswith("| Timestamp") or line.startswith("|---"):
+        if not is_benchmark_row(line):
             continue
         parts = [part.strip() for part in line.strip("|").split("|")]
-        if len(parts) >= 9:
+        if len(parts) >= CONFIG.benchmark_header_columns:
             status = parts[3]
             speed_text = parts[4]
-        elif len(parts) >= 8:
+        elif len(parts) >= CONFIG.legacy_benchmark_header_columns:
             status = parts[2]
             speed_text = parts[3]
         else:
             continue
-        if status != "ok":
+        if status != CONFIG.success_status:
             continue
         try:
             speed = float(speed_text)
         except ValueError:
+            logging.getLogger("llama_bench").debug("Skipping row with non-numeric speed: %s", line)
             continue
         best = speed if best is None else max(best, speed)
     return best
@@ -623,7 +664,8 @@ def best_successful_result(results: list[BenchmarkResult]) -> BenchmarkResult | 
     successful = [
         result
         for result in results
-        if result.status == "ok" and timing_value(result, "predicted_per_second") is not None
+        if result.status == CONFIG.success_status
+        and timing_value(result, "predicted_per_second") is not None
     ]
     if not successful:
         return None
@@ -669,7 +711,7 @@ def update_optimization_memory(
 
     lines.extend(["", "## Latest Run Patterns", ""])
     for result in results:
-        if result.status != "ok":
+        if result.status != CONFIG.success_status:
             continue
         variant = VARIANTS[result.name]
         gen_speed = timing_value(result, "predicted_per_second")
@@ -681,7 +723,7 @@ def update_optimization_memory(
         )
 
     lines.extend(["", "## Failed Or Lower-Performing Configurations", ""])
-    failed = [result for result in results if result.status != "ok"]
+    failed = [result for result in results if result.status != CONFIG.success_status]
     if failed:
         lines.extend(f"- `{result.name}` failed: {result.error}" for result in failed)
     else:
@@ -710,8 +752,9 @@ def update_optimization_memory(
 
 def main() -> int:
     args = parse_args()
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    run_dir = args.output_dir / datetime.now().strftime("%Y%m%d-%H%M%S")
+    now = datetime.now()
+    timestamp = now.strftime(CONFIG.timestamp_format)
+    run_dir = args.output_dir / now.strftime(CONFIG.run_dir_timestamp_format)
     logger = configure_logging(run_dir)
     logger.info("Benchmark run directory: %s", run_dir)
 
@@ -735,7 +778,7 @@ def main() -> int:
         logger.error("Error: %s", exc)
         return 1
 
-    failed = [result for result in results if result.status != "ok"]
+    failed = [result for result in results if result.status != CONFIG.success_status]
     if failed:
         logger.error("%s variant(s) failed", len(failed))
         return 1
