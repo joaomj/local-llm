@@ -90,6 +90,20 @@ Current cross-model variants include the confirmed 12B Q4 baseline plus E2B/E4B 
 
 On the current Apple Metal llama.cpp build, E2B/E4B `UD-Q2_K_XL` fail during warmup with `metal_unsupported_quant_type_35`. Treat E2B Q4 as the fastest viable model and E4B Q4 as the quality/speed compromise candidate.
 
+To use the local `llama.cpp/gemma-qat` opencode provider, start the server first:
+
+```bash
+./best_command.sh
+```
+
+Then restart opencode and select/use:
+
+```text
+llama.cpp/gemma-qat
+```
+
+The provider expects `llama-server` at `http://127.0.0.1:8080/v1`, so keep that terminal running while using the local model.
+
 ---
 
 ## Opencode Integration (Next)
