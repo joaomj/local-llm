@@ -2,7 +2,7 @@
 
 This file records the current technical state for the local llama.cpp setup.
 
-Last updated: 2026-06-07.
+Last updated: 2026-06-08.
 
 ---
 
@@ -40,18 +40,9 @@ Rationale:
 
 - Fastest working model measured: 52.7943 generation tok/s.
 - Prompt processing measured at 148.5310 tok/s.
+- Representative real-chat run with 49K context, Flash Attention, and reasoning suppression processed a ~15K-token synthesis prompt at about 518 prompt tok/s and 42 generation tok/s.
 - Fits easily on the 16 GB Mac mini.
 - Good match for local chat and classification.
-
-Fallback if quality is insufficient:
-
-```text
-unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL
-```
-
-E4B Q4 measured 32.3460 generation tok/s and 92.4689 prompt tok/s.
-
----
 
 ## Best Server Command
 
@@ -69,10 +60,12 @@ llama-server \
   --alias gemma-qat \
   --no-mmproj \
   --reasoning off \
+  --reasoning-budget 0 \
   --temp 0.8 \
   --top-p 0.95 \
   --top-k 64 \
-  --ctx-size 131072 \
+  --ctx-size 49152 \
+  --flash-attn on \
   --port 8080 \
   --tools all \
   --parallel 1
@@ -83,6 +76,9 @@ Important details:
 - `--alias gemma-qat` makes the raw API model name stable.
 - `--parallel 1` matches single-user local usage and improved 12B performance during testing.
 - `--no-mmproj` keeps the server text-only.
+- `--ctx-size 49152` keeps enough room for multi-turn chat/tool-routing while avoiding the slowdown observed with 131K context.
+- `--flash-attn on` is confirmed in server logs as `flash_attn = enabled`.
+- `--reasoning off --reasoning-budget 0` suppresses hidden reasoning for this routing/chat use case.
 - `--port 8080` matches the opencode provider config.
 
 ---
@@ -110,8 +106,8 @@ Provider shape follows the official llama.cpp provider docs:
         "gemma-qat": {
           "name": "Gemma 4 E2B QAT Q4 (local)",
           "limit": {
-            "context": 32768,
-            "input": 32768,
+            "context": 49152,
+            "input": 49152,
             "output": 8192
           },
           "temperature": true,
@@ -132,10 +128,8 @@ The provider does not start `llama-server`. Start `./run_model.sh` first, then r
 | Variant | Model | Gen tok/s | Prompt tok/s | Result |
 |---|---|---:|---:|---|
 | `e2b-q4-32k` | E2B Q4 | 52.7943 | 148.5310 | Best speed |
-| `e4b-q4-32k` | E4B Q4 | 32.3460 | 92.4689 | Quality/speed fallback |
 | `12b-q4-32k` | 12B Q4 | 13.5111 | 47.3704 | Quality baseline, not needed for current use |
 | `e2b-q2-32k` | E2B Q2 | - | - | Failed on Metal |
-| `e4b-q2-32k` | E4B Q2 | - | - | Failed on Metal |
 
 Full cumulative data is in `benchmarks/benchmark_results.md`.
 
@@ -145,7 +139,7 @@ Full cumulative data is in `benchmarks/benchmark_results.md`.
 
 ### Q2 Gemma QAT GGUF
 
-E2B/E4B `UD-Q2_K_XL` failed during llama.cpp Metal warmup:
+E2B `UD-Q2_K_XL` failed during llama.cpp Metal warmup:
 
 ```text
 metal_unsupported_quant_type_35
@@ -161,7 +155,15 @@ Not tested further. The Q4 GGUF is about 14.2 GB, which leaves too little headro
 
 ### 12B QAT Q4
 
-Works, but it is much slower than E2B/E4B for the current chat/classifier use case.
+Works, but it is much slower than E2B for the current chat/classifier use case.
+
+### Gemma 4 E4B QAT Q4
+
+Tested and rejected for the current objective. It was slower than E2B and did not demonstrate enough chat/classifier benefit to remain active.
+
+### Qwen3.5 9B GGUF
+
+Tested and rejected for the current objective. It produced stronger strict JSON, but the speed tradeoff was not acceptable for the desired local ChatGPT-style chatting experience.
 
 ### MLX paths
 
@@ -185,6 +187,7 @@ Removed cache artifacts:
 
 - Gemma 4 12B QAT GGUF
 - Gemma 4 E4B QAT GGUF
+- Qwen3.5 9B GGUF
 - E2B Q2 blob
 - E2B mmproj blob
 - Old MLX/Qwen artifacts from earlier exploration
@@ -229,6 +232,5 @@ The script:
 
 ## Next Steps
 
-1. Validate E2B Q4 on real chat and classification prompts.
-2. If E2B quality is insufficient, restore/download E4B Q4 and compare quality against speed.
-3. Keep Q2 and MoE variants out of the default path unless llama.cpp Metal support or hardware changes.
+1. Keep validating E2B Q4 on real chat and classification prompts.
+2. Keep E4B, Qwen3.5, Q2, and MoE variants out of the active path unless objectives change.

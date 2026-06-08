@@ -31,7 +31,9 @@ class ServerDefaults:
     process_shutdown_timeout_seconds: int = 30
     process_exit_timeout_seconds: int = 30
     process_poll_interval_seconds: int = 1
+    post_model_cleanup_grace_seconds: int = 10
     ctx_size: int = 131072
+    real_chat_ctx_size: int = 49152
     reduced_ctx_size: int = 16384
     parallel: int = 1
     threads_6: int = 6
@@ -40,6 +42,9 @@ class ServerDefaults:
     temperature: str = "0.8"
     top_p: str = "0.95"
     top_k: str = "64"
+    log_level: int = 4
+    reasoning_budget: int = 0
+    chat_template_kwargs: str = '{"enable_thinking":false}'
     max_tokens: int = 900
     prompt: str = (
         "Classify this user message as one of: casual_chat, task_request, bug_report, "
@@ -65,9 +70,7 @@ class BenchmarkPaths:
 class ModelRepos:
     gemma_12b_q4: str = "unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL"
     gemma_e2b_q4: str = "unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL"
-    gemma_e4b_q4: str = "unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL"
     gemma_e2b_q2: str = "unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q2_K_XL"
-    gemma_e4b_q2: str = "unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q2_K_XL"
 
 
 @dataclass(frozen=True)
@@ -99,8 +102,21 @@ class BenchmarkVariant:
     parallel: int | None = None
     threads: int | None = None
     cache_ram: int | None = None
+    temperature: str = CONFIG.server.temperature
+    top_p: str = CONFIG.server.top_p
+    top_k: str = CONFIG.server.top_k
+    perf: bool = True
+    chat_template_kwargs: str | None = CONFIG.server.chat_template_kwargs
     hypothesis: str = ""
     expected_improvement: str = ""
+
+
+@dataclass(frozen=True)
+class QualityPrompt:
+    name: str
+    prompt: str
+    expected_label: str | None = None
+    requires_json: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,6 +126,7 @@ class BenchmarkResult:
     response_path: str | None
     server_log_path: str
     timings: dict[str, Any] | None
+    quality: list[dict[str, Any]]
     error: str | None
 
 
@@ -119,7 +136,61 @@ class FailureClassification:
     message: str
 
 
+QUALITY_PROMPTS = [
+    QualityPrompt(
+        name="classification_bug_report",
+        prompt=(
+            "Classify this user message as one of: casual_chat, task_request, bug_report, "
+            "or unknown. Return only JSON with keys label and rationale. Message: "
+            "'After I increased the context window, my local model got much slower and sometimes "
+            "the server exits during warmup.'"
+        ),
+        expected_label="bug_report",
+        requires_json=True,
+    ),
+    QualityPrompt(
+        name="classification_task_request",
+        prompt=(
+            "Classify this user message as one of: casual_chat, task_request, bug_report, "
+            "or unknown. Return only JSON with keys label and rationale. Message: "
+            "'Keep Gemma E2B as the only active local chat model.'"
+        ),
+        expected_label="task_request",
+        requires_json=True,
+    ),
+    QualityPrompt(
+        name="bug_diagnosis",
+        prompt=(
+            "A llama.cpp server on a 16 GB Mac mini M4 slows down after ctx-size is raised "
+            "from 49K to 131K. Explain the most likely cause in five concise bullet points."
+        ),
+    ),
+    QualityPrompt(
+        name="tool_json",
+        prompt=(
+            "Return only valid JSON for a tool call plan with keys action, model, quant, and "
+            "should_run_now. Use action='benchmark', model='Gemma-E2B', quant='UD-Q4_K_XL', "
+            "and should_run_now=false."
+        ),
+        requires_json=True,
+    ),
+    QualityPrompt(
+        name="no_thinking_leakage",
+        prompt="Answer in one sentence without hidden reasoning: why benchmark one model at a time?",
+    ),
+]
+
+
 VARIANTS = {
+    "gemma-e2b-q4-49k": BenchmarkVariant(
+        "gemma-e2b-q4-49k",
+        model_repo=CONFIG.models.gemma_e2b_q4,
+        ctx_size=CONFIG.server.real_chat_ctx_size,
+        flash_attn="on",
+        parallel=CONFIG.server.parallel,
+        hypothesis="Current 49K real-chat baseline with Flash Attention and thinking disabled.",
+        expected_improvement="Control run for speed, stability, and quality comparison.",
+    ),
     "12b-q4-32k": BenchmarkVariant(
         "12b-q4-32k",
         model_repo=CONFIG.models.gemma_12b_q4,
@@ -136,14 +207,6 @@ VARIANTS = {
         hypothesis="E2B Q4 should be much faster and fit easily on 16GB unified memory.",
         expected_improvement="Higher chat/classifier throughput with lower memory use than 12B.",
     ),
-    "e4b-q4-32k": BenchmarkVariant(
-        "e4b-q4-32k",
-        model_repo=CONFIG.models.gemma_e4b_q4,
-        ctx_size=CONFIG.server.ctx_size,
-        parallel=CONFIG.server.parallel,
-        hypothesis="E4B Q4 may be the best fast chat/classifier quality compromise.",
-        expected_improvement="Meaningfully faster than 12B while preserving more quality than E2B.",
-    ),
     "e2b-q2-32k": BenchmarkVariant(
         "e2b-q2-32k",
         model_repo=CONFIG.models.gemma_e2b_q2,
@@ -151,14 +214,6 @@ VARIANTS = {
         parallel=CONFIG.server.parallel,
         hypothesis="E2B Q2 tests the maximum speed/minimum memory chat/classifier tradeoff.",
         expected_improvement="Fastest candidate, with possible classification accuracy degradation.",
-    ),
-    "e4b-q2-32k": BenchmarkVariant(
-        "e4b-q2-32k",
-        model_repo=CONFIG.models.gemma_e4b_q2,
-        ctx_size=CONFIG.server.ctx_size,
-        parallel=CONFIG.server.parallel,
-        hypothesis="E4B Q2 tests whether a smaller quant improves speed enough to justify quality loss.",
-        expected_improvement="Faster and lower memory than E4B Q4, with possible classifier quality loss.",
     ),
     "baseline-32k": BenchmarkVariant(
         "baseline-32k",
@@ -218,6 +273,10 @@ VARIANTS = {
         expected_improvement="Lower memory pressure without harming generation speed.",
     ),
 }
+
+COMPARISON_VARIANTS = [
+    "gemma-e2b-q4-49k",
+]
 
 
 class BenchmarkError(RuntimeError):
@@ -281,6 +340,11 @@ def parse_args() -> argparse.Namespace:
         "--repeat",
         action="store_true",
         help="Allow variants already recorded in benchmarks/benchmark_results.md to run again.",
+    )
+    parser.add_argument(
+        "--comparison",
+        action="store_true",
+        help="Run the active 49K Gemma E2B baseline set.",
     )
     return parser.parse_args()
 
@@ -389,6 +453,8 @@ def ensure_environment(args: argparse.Namespace, logger: logging.Logger) -> None
 def build_server_command(variant: BenchmarkVariant, port: int | None) -> list[str]:
     command = [
         "llama-server",
+        "-lv",
+        str(CONFIG.server.log_level),
         "-hf",
         variant.model_repo,
         "--alias",
@@ -396,18 +462,24 @@ def build_server_command(variant: BenchmarkVariant, port: int | None) -> list[st
         "--no-mmproj",
         "--reasoning",
         "off",
+        "--reasoning-budget",
+        str(CONFIG.server.reasoning_budget),
         "--temp",
-        CONFIG.server.temperature,
+        variant.temperature,
         "--top-p",
-        CONFIG.server.top_p,
+        variant.top_p,
         "--top-k",
-        CONFIG.server.top_k,
+        variant.top_k,
         "--ctx-size",
         str(variant.ctx_size),
     ]
+    if variant.perf:
+        command.append("--perf")
     if port is not None:
         command.extend(["--port", str(port)])
     command.extend(["--tools", "all"])
+    if variant.chat_template_kwargs is not None:
+        command.extend(["--chat-template-kwargs", variant.chat_template_kwargs])
     if variant.flash_attn is not None:
         command.extend(["--flash-attn", variant.flash_attn])
     if variant.parallel is not None:
@@ -436,10 +508,10 @@ def wait_for_server(port: int, process: subprocess.Popen[bytes], timeout: int) -
     raise BenchmarkError(f"llama-server was not ready within {timeout} seconds")
 
 
-def request_completion(port: int, timeout: int) -> dict[str, Any]:
+def request_completion(port: int, timeout: int, prompt: str) -> dict[str, Any]:
     payload = {
         "model": CONFIG.server.alias,
-        "messages": [{"role": "user", "content": CONFIG.server.prompt}],
+        "messages": [{"role": "user", "content": prompt}],
         "max_tokens": CONFIG.server.max_tokens,
     }
     request = Request(
@@ -470,8 +542,45 @@ def extract_timings(response: dict[str, Any]) -> dict[str, Any] | None:
     return timings if isinstance(timings, dict) else None
 
 
+def response_content(response: dict[str, Any]) -> str:
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        return ""
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def score_quality(prompt: QualityPrompt, response: dict[str, Any]) -> dict[str, Any]:
+    content = response_content(response)
+    result: dict[str, Any] = {
+        "prompt": prompt.name,
+        "has_content": bool(content.strip()),
+        "thinking_leaked": "<think>" in content.lower() or "</think>" in content.lower(),
+        "json_valid": None,
+        "label_correct": None,
+    }
+    parsed_json: Any = None
+    if prompt.requires_json:
+        try:
+            parsed_json = json.loads(content)
+            result["json_valid"] = isinstance(parsed_json, dict)
+        except json.JSONDecodeError:
+            result["json_valid"] = False
+    if prompt.expected_label is not None and isinstance(parsed_json, dict):
+        label = parsed_json.get("label")
+        result["label_correct"] = label == prompt.expected_label
+    return result
+
+
 def terminate_started_server(process: subprocess.Popen[bytes], logger: logging.Logger) -> None:
     if process.poll() is not None:
+        time.sleep(CONFIG.server.post_model_cleanup_grace_seconds)
         return
     logger.info("Stopping llama-server pid=%s", process.pid)
     process.terminate()
@@ -481,6 +590,11 @@ def terminate_started_server(process: subprocess.Popen[bytes], logger: logging.L
         logger.warning("llama-server did not stop after SIGTERM; sending SIGKILL")
         process.kill()
         process.wait(timeout=CONFIG.server.process_shutdown_timeout_seconds)
+    logger.info(
+        "Waiting %s seconds for model memory cleanup",
+        CONFIG.server.post_model_cleanup_grace_seconds,
+    )
+    time.sleep(CONFIG.server.post_model_cleanup_grace_seconds)
 
 
 def run_variant(
@@ -490,7 +604,7 @@ def run_variant(
     logger: logging.Logger,
 ) -> BenchmarkResult:
     server_log_path = run_dir / f"{variant.name}{CONFIG.server_log_suffix}"
-    response_path = run_dir / f"{variant.name}{CONFIG.response_suffix}"
+    response_path = run_dir / f"{variant.name}.quality{CONFIG.response_suffix}"
     command = build_server_command(variant, args.port)
     logger.info("Starting variant=%s command=%s", variant.name, " ".join(command))
     with server_log_path.open("wb") as server_log:
@@ -499,16 +613,31 @@ def run_variant(
             time.sleep(CONFIG.server.post_start_grace_seconds)
             wait_for_server(args.port, process, args.startup_timeout)
             logger.info("Server ready for variant=%s pid=%s", variant.name, process.pid)
-            response = request_completion(args.port, args.request_timeout)
-            response_path.write_text(json.dumps(response, indent=2), encoding="utf-8")
-            timings = extract_timings(response)
-            logger.info("Completed variant=%s timings=%s", variant.name, json.dumps(timings))
+            responses: list[dict[str, Any]] = []
+            quality: list[dict[str, Any]] = []
+            timings: dict[str, Any] | None = None
+            for prompt in QUALITY_PROMPTS:
+                response = request_completion(args.port, args.request_timeout, prompt.prompt)
+                prompt_response_path = run_dir / f"{variant.name}.{prompt.name}{CONFIG.response_suffix}"
+                prompt_response_path.write_text(json.dumps(response, indent=2), encoding="utf-8")
+                responses.append(response)
+                quality.append(score_quality(prompt, response))
+                if timings is None:
+                    timings = extract_timings(response)
+            response_path.write_text(json.dumps(responses, indent=2), encoding="utf-8")
+            logger.info(
+                "Completed variant=%s first_prompt_timings=%s quality=%s",
+                variant.name,
+                json.dumps(timings),
+                json.dumps(quality),
+            )
             return BenchmarkResult(
                 variant.name,
                 CONFIG.success_status,
                 str(response_path),
                 str(server_log_path),
                 timings,
+                quality,
                 None,
             )
         except BenchmarkError as exc:
@@ -523,6 +652,7 @@ def run_variant(
                 str(response_path) if response_path.exists() else None,
                 str(server_log_path),
                 None,
+                [],
                 error,
             )
         finally:
@@ -537,6 +667,26 @@ def timing_value(result: BenchmarkResult, key: str) -> float | None:
 def token_value(result: BenchmarkResult, key: str) -> int | None:
     value = None if result.timings is None else result.timings.get(key)
     return int(value) if isinstance(value, int | float) else None
+
+
+def quality_score(result: BenchmarkResult) -> str:
+    if not result.quality:
+        return ""
+    checks = 0
+    passed = 0
+    for prompt_result in result.quality:
+        for key in ("has_content", "json_valid", "label_correct"):
+            value = prompt_result.get(key)
+            if value is None:
+                continue
+            checks += 1
+            if value is True:
+                passed += 1
+        if prompt_result.get("thinking_leaked") is not None:
+            checks += 1
+            if prompt_result.get("thinking_leaked") is False:
+                passed += 1
+    return f"{passed}/{checks}" if checks else ""
 
 
 def read_recorded_variants() -> set[str]:
@@ -561,7 +711,7 @@ def is_benchmark_row(line: str) -> bool:
 
 
 def select_variants(args: argparse.Namespace, logger: logging.Logger) -> list[str]:
-    requested = args.only or list(VARIANTS)
+    requested = args.only or (COMPARISON_VARIANTS if args.comparison else list(VARIANTS))
     if args.repeat:
         return requested
     recorded = read_recorded_variants()
@@ -611,10 +761,10 @@ def write_summary(results: list[BenchmarkResult], run_dir: Path, logger: logging
     summary_md = run_dir / "summary.md"
     summary_json.write_text(json.dumps([result.__dict__ for result in results], indent=2), encoding="utf-8")
     lines = [
-        "# Gemma QAT llama.cpp Benchmark",
+        "# Local Model llama.cpp Benchmark",
         "",
-        "| Variant | Model | Status | Gen tok/s | Prompt tok/s | Error |",
-        "|---|---|---|---:|---:|---|",
+        "| Variant | Model | Status | Gen tok/s | Prompt tok/s | Quality | Error |",
+        "|---|---|---|---:|---:|---:|---|",
     ]
     for result in results:
         gen_speed = timing_value(result, "predicted_per_second")
@@ -622,7 +772,8 @@ def write_summary(results: list[BenchmarkResult], run_dir: Path, logger: logging
         lines.append(
             f"| {result.name} | {VARIANTS[result.name].model_repo} | {result.status} | "
             f"{gen_speed if gen_speed is not None else ''} | "
-            f"{prompt_speed if prompt_speed is not None else ''} | {result.error or ''} |"
+            f"{prompt_speed if prompt_speed is not None else ''} | "
+            f"{quality_score(result)} | {result.error or ''} |"
         )
     summary_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
     logger.info("Wrote summary: %s", summary_md)
@@ -737,8 +888,8 @@ def update_optimization_memory(
         )
     elif not unrecorded_variants():
         lines.append(
-            "No unrecorded variants remain. Use E2B Q4 for maximum speed, or E4B Q4 if "
-            "chat/classifier quality is not sufficient. Q2 variants failed on Metal."
+            "No unrecorded variants remain. Use E2B Q4 as the active local chat model. "
+            "Q2 variants failed on Metal."
         )
     else:
         remaining = ", ".join(unrecorded_variants())
