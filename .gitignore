@@ -1,6 +1,19 @@
+# Python
 .venv/
 __pycache__/
 *.py[cod]
+
+# Secrets
+.env
+
+# Runtime artifacts
+server.log
 *.log
+
+# Results
+bench_raw.json
+bench_results.json
 *.json
+
+# macOS
 .DS_Store

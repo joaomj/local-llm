@@ -1,158 +1,89 @@
-# Local LLM Setup - Gemma 4 E2B QAT on Mac mini M4 16GB
+# Local LLM: LFM2.5-8B-A1B on Apple Silicon
 
-Current local model: `unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL`
+Run Liquid AI's LFM2.5-8B-A1B locally with web search, and measure its performance. The project targets macOS on Apple Silicon (tested on a Mac Mini M4, 16GB).
 
-Use case: local chat and lightweight classification. This setup is not intended to replace the main coding model.
+The model is a Mixture-of-Experts LLM with 8B total parameters and about 1.5B active parameters per token. It runs in the official 8-bit MLX format.
 
-Hardware: Mac mini M4, 16 GB unified memory.
+## What is included
 
----
+| File | Purpose |
+|---|---|
+| `chat.py` | Terminal chat client with Exa web search and per-turn metrics |
+| `bench.py` | Repeated-trials benchmark with median and p95 metrics |
+| `OPENCODE.md` | Use the endpoint as a model provider in opencode |
+| `REPORT.md` | Full performance report and 4-bit quality research |
 
-## Quick Start
+## Requirements
 
-Install llama.cpp:
+- macOS with Apple Silicon
+- 16GB RAM or more
+- Homebrew
+- `uv` (Python package manager)
+- An Exa API key (https://exa.ai) for web search
 
-```bash
-brew install llama.cpp
-```
+## Setup
 
-Start the best known local server:
-
-```bash
-./run_model.sh
-```
-
-The server listens on:
-
-```text
-http://127.0.0.1:8080/v1
-```
-
-Test it:
+### 1. Install the MLX tools
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gemma-qat","messages":[{"role":"user","content":"Classify this as casual_chat, task_request, bug_report, or unknown: my local model is slow"}],"max_tokens":100}'
+uv tool install mlx-lm
+uv tool install huggingface_hub
 ```
 
----
+### 2. Download the model
 
-## Run Model
-
-`run_model.sh` currently resolves the locally cached GGUF and runs:
+The official 8-bit MLX weights download on first server start. To pre-download them:
 
 ```bash
-llama-server \
-  -m ~/.cache/huggingface/hub/models--unsloth--gemma-4-E2B-it-qat-GGUF/snapshots/<snapshot>/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf \
-  --alias gemma-qat \
-  --no-mmproj \
-  --reasoning off \
-  --reasoning-budget 0 \
-  --temp 0.8 \
-  --top-p 0.95 \
-  --top-k 64 \
-  --ctx-size 49152 \
-  --flash-attn on \
-  --port 8080 \
-  --tools all \
-  --parallel 1
+hf download LiquidAI/LFM2.5-8B-A1B-MLX-8bit
 ```
 
-Keep that terminal running while using the local model.
-
-The current real-chat default uses a 49K context window, Flash Attention, and explicit reasoning suppression. This was faster than the earlier 131K context run while keeping enough room for multi-turn chat and tool-routing prompts.
-
----
-
-## OpenCode Provider
-
-The global opencode config has a local `llama.cpp` provider:
-
-```text
-llama.cpp/gemma-qat
-```
-
-The provider expects `llama-server` at `http://127.0.0.1:8080/v1`. It does not start the server automatically.
-
-After changing opencode config, restart opencode. Running sessions keep using the already-loaded config.
-
----
-
-## Benchmark Results
-
-| Variant | Model | Gen tok/s | Prompt tok/s | Status |
-|---|---|---:|---:|---|
-| `e2b-q4-32k` | Gemma 4 E2B QAT Q4 | 52.7943 | 148.5310 | Active model |
-| `12b-q4-32k` | Gemma 4 12B QAT Q4 | 13.5111 | 47.3704 | Quality baseline, too slow for this use case |
-| `e2b-q2-32k` | Gemma 4 E2B QAT Q2 | - | - | Failed on Metal |
-
-Full history is in `benchmarks/benchmark_results.md`.
-
----
-
-## Benchmark Automation
-
-Run the benchmark suite with uv:
+### 3. Set the Exa API key
 
 ```bash
-uv run python scripts/benchmark_gemma_qat.py
+export EXA_API_KEY=your-key-here
 ```
 
-Useful commands:
+The chat client also reads the key from a `.env` file in the project root (`EXA_API_KEY=...`).
+
+### 4. Start the model server
 
 ```bash
-uv run python scripts/benchmark_gemma_qat.py --comparison --repeat --kill-existing
-uv run python scripts/benchmark_gemma_qat.py --only e2b-q4-32k --repeat
-uv run python scripts/benchmark_gemma_qat.py --kill-existing
-uv run python scripts/benchmark_gemma_qat.py --startup-timeout 900
+mlx_lm.server --model LiquidAI/LFM2.5-8B-A1B-MLX-8bit \
+  --host 127.0.0.1 --port 8080 \
+  --max-tokens 4096
 ```
 
-The script checks `llama-server`, port availability, and existing `llama-server` processes. Logs and response JSON files are written to `logs/llama-bench/<timestamp>/`.
+The `--max-tokens` flag is important. The server default is 512. This model reasons before answering, so the default truncates responses.
 
-The 49K comparison command now tests only the current Gemma E2B baseline. It still runs one model at a time and waits after each server shutdown so Metal memory is released before loading the next model.
+## Usage
 
-The comparison suite uses the current no-thinking Flash Attention command shape: `--ctx-size 49152`, `--flash-attn on`, `--reasoning off`, `--reasoning-budget 0`, `--chat-template-kwargs '{"enable_thinking":false}'`, `--tools all`, and `--parallel 1`.
+### Chat with web search
 
-The optimization loop uses:
+```bash
+uv run chat.py
+```
 
-- `OPTIMIZATION_PROTOCOL.md`
-- `benchmarks/benchmark_results.md`
-- `benchmarks/optimization_memory.md`
-- `run_model.sh`
+The model searches the web through the Exa API when the question needs current information.
 
-By default, already-recorded variants are skipped. Use `--repeat` only when intentionally rerunning an experiment.
+### Run the benchmark
 
----
+```bash
+uv run bench.py --trials 10
+```
 
-## Current Findings
+The benchmark prints median and p95 for time to first token, generation speed, and prompt processing speed. Results also save to `bench_raw.json`.
 
-- E2B Q4 is the fastest viable model for local chat/classification.
-- The current default server config is E2B Q4 with `--ctx-size 49152`, `--flash-attn on`, `--reasoning off`, and `--reasoning-budget 0`.
-- In representative chat logs, the 49K Flash Attention/no-reasoning config processed a ~15K-token synthesis prompt at about 518 prompt tok/s and 42 generation tok/s.
-- Q2 variants fail on this Apple Metal llama.cpp build with `metal_unsupported_quant_type_35`.
-- The 26B A4B MoE is intentionally excluded because its 14.2 GB GGUF leaves too little headroom on a 16 GB Mac mini.
-- E4B and Qwen3.5 were tested, rejected for this objective, and removed from local cache.
-- Only the E2B Q4 Hugging Face cache is retained locally.
+## Use the endpoint in opencode
 
----
+The server exposes an OpenAI-compatible API on `http://127.0.0.1:8080/v1`. See `OPENCODE.md` for the provider configuration.
 
-## Troubleshooting
+## Performance snapshot
 
-| Issue | Cause | Fix |
-|---|---|---|
-| Provider fails in opencode | `llama-server` is not running | Start `./run_model.sh` first |
-| Model ID error | Server alias mismatch | Use `gemma-qat` for raw API calls and `llama.cpp/gemma-qat` in opencode |
-| Port busy | Another server uses 8080 | Stop it or change both `--port` and provider `baseURL` |
-| Q2 exits during warmup | Metal backend unsupported quant path | Use Q4 variants |
-| Metal OOM | Model + KV cache exceeds available Metal memory | Use E2B Q4 or reduce `--ctx-size` |
+Measured on Mac Mini M4 (16GB), official 8-bit MLX weights:
 
----
+- Generation: 44-47 tokens/s
+- Time to first token: 0.13s (small prompt), 2.1s (after web search)
+- Peak memory: 9.3GB
 
-## References
-
-- [llama.cpp](https://github.com/ggml-org/llama.cpp)
-- [opencode llama.cpp provider docs](https://opencode.ai/docs/providers#llamacpp)
-- [Unsloth Gemma 4 QAT collection](https://huggingface.co/collections/unsloth/gemma-4-qat)
-- [Gemma 4 E2B QAT GGUF](https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF)
-- [Gemma 4 12B QAT GGUF](https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF)
+See `REPORT.md` for the full report and the 4-bit quantization analysis.
