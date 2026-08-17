@@ -32,7 +32,9 @@ uv tool install huggingface_hub
 
 ### 2. Download the model
 
-The official 8-bit MLX weights download on first server start. To pre-download them:
+The official 8-bit MLX weights live on Hugging Face: https://huggingface.co/LiquidAI/LFM2.5-8B-A1B-MLX-8bit
+
+They download on first server start. To pre-download them:
 
 ```bash
 hf download LiquidAI/LFM2.5-8B-A1B-MLX-8bit
