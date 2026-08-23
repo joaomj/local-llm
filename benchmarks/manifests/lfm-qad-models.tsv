@@ -1,0 +1,5 @@
+# id	hugging_face_repo	file	maximum_context_tokens	model_directory
+lfm2.5-230m-qad-q4_0	LiquidAI/LFM2.5-230M-GGUF	LFM2.5-230M-QAD-Q4_0.gguf	32768	LFM2.5-230M-QAD-Q4_0
+lfm2.5-350m-qad-q4_0	LiquidAI/LFM2.5-350M-GGUF	LFM2.5-350M-QAD-Q4_0.gguf	32768	LFM2.5-350M-QAD-Q4_0
+lfm2.5-1.2b-instruct-qad-q4_0	LiquidAI/LFM2.5-1.2B-Instruct-GGUF	LFM2.5-1.2B-Instruct-QAD-Q4_0.gguf	32768	LFM2.5-1.2B-Instruct-QAD-Q4_0
+lfm2.5-2.6b-qad-q4_0	LiquidAI/LFM2.5-2.6B-GGUF	LFM2.5-2.6B-QAD-Q4_0.gguf	131072	LFM2.5-2.6B-QAD-Q4_0

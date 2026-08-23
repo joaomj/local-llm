@@ -1,0 +1,39 @@
+{
+  "source": {
+    "url": "https://www.liquid.ai/blog/qad",
+    "hugging_face_url": "https://huggingface.co/blog/LiquidAI/qad",
+    "published_at": "2026-08-19",
+    "method": "Liquid AI QAD Q4_0 release; mean across five repeats",
+    "quality_suite": [
+      "GPQA Diamond",
+      "MMLU-Pro",
+      "IFEval",
+      "IFBench",
+      "Multi-IF",
+      "BFCLv4",
+      "GSM8K or AIME25"
+    ]
+  },
+  "models": {
+    "lfm2.5-230m-qad-q4_0": {
+      "qad_mean_score": 33.6,
+      "bf16_retained_percent": 97.1,
+      "math_benchmark": "GSM8K"
+    },
+    "lfm2.5-350m-qad-q4_0": {
+      "qad_mean_score": 36.1,
+      "bf16_retained_percent": 96.5,
+      "math_benchmark": "GSM8K"
+    },
+    "lfm2.5-1.2b-instruct-qad-q4_0": {
+      "qad_mean_score": 42.7,
+      "bf16_retained_percent": 97.4,
+      "math_benchmark": "AIME25"
+    },
+    "lfm2.5-2.6b-qad-q4_0": {
+      "qad_mean_score": 64.1,
+      "bf16_retained_percent": 96.6,
+      "math_benchmark": "AIME25"
+    }
+  }
+}

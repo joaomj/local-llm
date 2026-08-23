@@ -103,7 +103,11 @@ class Config:
             ).expanduser(),
             manifest=Path(
                 os.environ.get(
-                    "LLAMA_BENCHMARK_MANIFEST", ROOT / "llama-benchmark-models.tsv"
+                    "LLAMA_BENCHMARK_MANIFEST",
+                    ROOT.parent
+                    / "benchmarks"
+                    / "manifests"
+                    / "llama-benchmark-models.tsv",
                 )
             ).expanduser(),
             benchmark_root=Path(

@@ -22,7 +22,7 @@ class ThroughputSearchCliTest(unittest.TestCase):
     def test_manifest_starts_with_historical_gemma_qat_quant_order(self) -> None:
         rows = [
             line.split("\t")
-            for line in (ROOT / "scripts" / "throughput-models.tsv")
+            for line in (ROOT / "benchmarks" / "manifests" / "throughput-models.tsv")
             .read_text(encoding="utf-8")
             .splitlines()
             if line and not line.startswith("#")
@@ -172,7 +172,7 @@ id="$LLAMA_SERVER_BENCHMARK_MODEL_ID"
 printf '%s\n' "$id" >> "$FAKE_CALL_LOG"
 mkdir -p "$LLAMA_SERVER_BENCHMARK_ROOT"
 if [[ "$id" == "a-high" ]]; then met=false; configured=0; occupied=0; else met=true; configured=49152; occupied=8192; fi
-printf '{"measurement_contract":"llama_server_capacity_and_prompt-v1","model_id":"%s","minimum_requirement_met":%s,"largest_passing_configured_context_tokens":%s,"largest_passing_actual_prompt_tokens":%s,"weights_retained":true,"measurements":[]}\n' "$id" "$met" "$configured" "$occupied" > "$LLAMA_SERVER_BENCHMARK_ROOT/summary.json"
+printf '{"measurement_contract":"llama_server_capacity_and_prompt-v3","model_id":"%s","minimum_requirement_met":%s,"largest_passing_configured_context_tokens":%s,"largest_passing_actual_prompt_tokens":%s,"weights_retained":true,"measurements":[]}\n' "$id" "$met" "$configured" "$occupied" > "$LLAMA_SERVER_BENCHMARK_ROOT/summary.json"
 """,
             )
             call_log = root / "calls.log"

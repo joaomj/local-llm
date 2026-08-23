@@ -72,7 +72,9 @@ TOOLS = [
 
 def exa_search(query: str) -> str:
     if not EXA_API_KEY:
-        return "ERROR: EXA_API_KEY not set. Set it in the environment or in a .env file."
+        return (
+            "ERROR: EXA_API_KEY not set. Set it in the environment or in a .env file."
+        )
     payload = {
         "query": query,
         "numResults": 5,
@@ -107,8 +109,14 @@ class Metrics:
     def __init__(self) -> None:
         self.calls = []
 
-    def record_call(self, label: str, prompt_tokens: int, completion_tokens: int,
-                    ttft_s: float, gen_s: float) -> None:
+    def record_call(
+        self,
+        label: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        ttft_s: float,
+        gen_s: float,
+    ) -> None:
         gen_s = max(gen_s, 1e-6)
         self.calls.append(
             {
@@ -116,7 +124,9 @@ class Metrics:
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "ttft_s": round(ttft_s, 3),
-                "ttft_ms_per_prompt_token": round(ttft_s * 1000 / max(prompt_tokens, 1), 3),
+                "ttft_ms_per_prompt_token": round(
+                    ttft_s * 1000 / max(prompt_tokens, 1), 3
+                ),
                 "gen_tokens_per_s": round(completion_tokens / gen_s, 2),
             }
         )
@@ -134,7 +144,6 @@ class Metrics:
             avg_gen = sum(c["gen_tokens_per_s"] for c in gen_calls) / len(gen_calls)
             avg_ttft = sum(c["ttft_s"] for c in gen_calls) / len(gen_calls)
             total_tok = sum(c["completion_tokens"] for c in gen_calls)
-            total_s = max(sum(c["ttft_s"] + (c["completion_tokens"] / max(c["gen_tokens_per_s"], 1e-6)) for c in gen_calls), 1e-6)
             print(
                 f"{CYAN}session avg: ttft={avg_ttft:.3f}s | "
                 f"gen={avg_gen:.1f} tok/s | {total_tok} output tokens this turn{RESET}"
@@ -212,7 +221,9 @@ def stream_turn(client: OpenAI, messages: list, metrics: Metrics) -> None:
             prompt_tokens,
             completion_tokens,
             (t_first - t0) if t_first else (t_end - t0),
-            (first_content_ts - t_first) if started_content and t_first else (t_end - t0),
+            (first_content_ts - t_first)
+            if started_content and t_first
+            else (t_end - t0),
         )
         return list(tool_calls.items())
 
@@ -228,7 +239,9 @@ def stream_turn(client: OpenAI, messages: list, metrics: Metrics) -> None:
 
 def main() -> None:
     if not EXA_API_KEY:
-        print("EXA_API_KEY not found. Search will report errors; export the key in a .env file.")
+        print(
+            "EXA_API_KEY not found. Search will report errors; export the key in a .env file."
+        )
     client = OpenAI(base_url=SERVER_URL, api_key="local")
     messages = [
         {
@@ -257,7 +270,9 @@ def main() -> None:
             print("History cleared.")
             continue
         if user_input == "/help":
-            print("Commands: /reset (clear history), /exit (quit). Search is always on.")
+            print(
+                "Commands: /reset (clear history), /exit (quit). Search is always on."
+            )
             continue
 
         messages.append({"role": "user", "content": user_input})
@@ -274,7 +289,10 @@ def main() -> None:
                     {
                         "id": call["id"],
                         "type": "function",
-                        "function": {"name": call["name"], "arguments": call["arguments"]},
+                        "function": {
+                            "name": call["name"],
+                            "arguments": call["arguments"],
+                        },
                     }
                     for _, call in result
                 ],
@@ -286,7 +304,11 @@ def main() -> None:
                 print(f"\033[2msearching: {query}...\033[0m", flush=True)
                 search_result = exa_search(query)
                 messages.append(
-                    {"role": "tool", "tool_call_id": call["id"], "content": search_result}
+                    {
+                        "role": "tool",
+                        "tool_call_id": call["id"],
+                        "content": search_result,
+                    }
                 )
             iteration += 1
         else:

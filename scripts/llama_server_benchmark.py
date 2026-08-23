@@ -8,6 +8,7 @@ import os
 import shutil
 import signal
 import socket
+import statistics
 import subprocess
 import time
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ from urllib.request import Request, urlopen
 
 from benchmark_conversation import SCENARIO_VERSION, build_tool_conversation
 
-CONTRACT = "llama_server_capacity_and_prompt-v1"
+CONTRACT = "llama_server_capacity_and_prompt-v3"
 DEFAULT_CAPACITIES = (32768, 49152, 65536, 98304, 131072, 150000)
 DEFAULT_PROMPT_TARGETS = (8192, 16384, 32768, 49152, 65536, 98304, 128000)
 
@@ -77,6 +78,7 @@ class Config:
     capacities: list[int]
     prompt_targets: list[int]
     generation_tokens: int
+    repetitions: int
     output_reserve: int
     minimum_tps: int
     benchmark_root: Path
@@ -122,6 +124,7 @@ class Config:
             generation_tokens=env_int(
                 "LLAMA_SERVER_BENCHMARK_GENERATION_TOKENS", 128, 1
             ),
+            repetitions=env_int("LLAMA_SERVER_BENCHMARK_REPETITIONS", 3, 3),
             output_reserve=env_int("LLAMA_SERVER_BENCHMARK_OUTPUT_RESERVE", 2048, 256),
             minimum_tps=env_int("LLAMA_SERVER_BENCHMARK_MIN_GENERATION_TPS", 50, 1),
             benchmark_root=Path(
@@ -241,7 +244,7 @@ def tokenize(base_url: str, content: str, timeout: int) -> int:
     return len(tokens)
 
 
-def completion(
+def completion_once(
     config: Config,
     base_url: str,
     capacity: int,
@@ -264,11 +267,15 @@ def completion(
     timings = response.get("timings")
     if not isinstance(timings, dict):
         raise BenchmarkError("completion response does not contain timings")
+    usage = response.get("usage")
+    if not isinstance(usage, dict):
+        raise BenchmarkError("completion response does not contain usage")
     prompt_n = timings.get("prompt_n")
+    actual_prompt_n = usage.get("prompt_tokens")
     predicted_n = timings.get("predicted_n")
     prompt_tps = timings.get("prompt_per_second")
     generation_tps = timings.get("predicted_per_second")
-    numeric = (prompt_n, predicted_n, prompt_tps, generation_tps)
+    numeric = (prompt_n, actual_prompt_n, predicted_n, prompt_tps, generation_tps)
     if any(
         not isinstance(value, (int, float)) or isinstance(value, bool)
         for value in numeric
@@ -284,7 +291,11 @@ def completion(
         else "short-v1",
         "configured_context_tokens": capacity,
         "target_prompt_tokens": target_prompt_tokens,
-        "actual_prompt_tokens": int(prompt_n),
+        "actual_prompt_tokens": int(actual_prompt_n),
+        "evaluated_prompt_tokens": int(prompt_n),
+        "cached_prompt_tokens": int(
+            usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+        ),
         "generated_tokens": int(predicted_n),
         "prompt_tokens_per_second": float(prompt_tps),
         "generation_tokens_per_second": float(generation_tps),
@@ -294,6 +305,71 @@ def completion(
         "measured_at": utc_now(),
     }
     return measurement, response
+
+
+def completion(
+    config: Config,
+    base_url: str,
+    capacity: int,
+    scenario: str,
+    target_prompt_tokens: int,
+    messages: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    measurements: list[dict[str, Any]] = []
+    responses: list[dict[str, Any]] = []
+    for _ in range(config.repetitions):
+        measurement, response = completion_once(
+            config,
+            base_url,
+            capacity,
+            scenario,
+            target_prompt_tokens,
+            messages,
+        )
+        measurements.append(measurement)
+        responses.append(response)
+
+    generation_samples = [
+        float(item["generation_tokens_per_second"]) for item in measurements
+    ]
+    prompt_samples = [float(item["prompt_tokens_per_second"]) for item in measurements]
+    aggregate = measurements[0].copy()
+    aggregate.update(
+        {
+            "actual_prompt_tokens": round(
+                statistics.median(
+                    int(item["actual_prompt_tokens"]) for item in measurements
+                )
+            ),
+            "generated_tokens": round(
+                statistics.median(
+                    int(item["generated_tokens"]) for item in measurements
+                )
+            ),
+            "evaluated_prompt_tokens": round(
+                statistics.median(
+                    int(item["evaluated_prompt_tokens"]) for item in measurements
+                )
+            ),
+            "cached_prompt_tokens": round(
+                statistics.median(
+                    int(item["cached_prompt_tokens"]) for item in measurements
+                )
+            ),
+            "prompt_tokens_per_second": statistics.median(prompt_samples),
+            "generation_tokens_per_second": statistics.median(generation_samples),
+            "wall_seconds": statistics.median(
+                float(item["wall_seconds"]) for item in measurements
+            ),
+            "generation_samples_tokens_per_second": generation_samples,
+            "prompt_samples_tokens_per_second": prompt_samples,
+            "qualifies_for_minimum_tps": statistics.median(generation_samples)
+            >= config.minimum_tps,
+            "repetitions": config.repetitions,
+            "measured_at": utc_now(),
+        }
+    )
+    return aggregate, {"responses": responses}
 
 
 def run_capacity(
@@ -314,18 +390,30 @@ def run_capacity(
         )
         try:
             wait_until_ready(base_url, process, config.startup_timeout)
+            short_messages = [
+                {
+                    "role": "user",
+                    "content": (
+                        "Explain this local language-model throughput benchmark in detail. "
+                        "Write at least 300 words."
+                    ),
+                }
+            ]
+            completion_once(
+                config,
+                base_url,
+                capacity,
+                "warmup",
+                0,
+                short_messages,
+            )
             short, response = completion(
                 config,
                 base_url,
                 capacity,
                 "short",
                 0,
-                [
-                    {
-                        "role": "user",
-                        "content": "Summarize the purpose of this benchmark.",
-                    }
-                ],
+                short_messages,
             )
             measurements.append(short)
             atomic_json(
@@ -336,8 +424,6 @@ def run_capacity(
                 f"actual_prompt={short['actual_prompt_tokens']} "
                 f"generation={short['generation_tokens_per_second']} tok/s"
             )
-            if not short["qualifies_for_minimum_tps"]:
-                return measurements
             for target in prompt_targets:
                 if target > capacity - config.output_reserve:
                     continue
@@ -457,9 +543,6 @@ def main() -> int:
                 break
             measurements.extend(batch)
             short = next(item for item in batch if item["scenario"] == "short")
-            if not short["qualifies_for_minimum_tps"]:
-                log(f"CAPACITY SPEED BOUNDARY: capacity={capacity}")
-                break
             occupied = [
                 item for item in batch if item["scenario"] == "tool_conversation"
             ]
@@ -470,6 +553,9 @@ def main() -> int:
                 occupied_boundary_reached = not occupied[-1][
                     "qualifies_for_minimum_tps"
                 ]
+            if not short["qualifies_for_minimum_tps"]:
+                log(f"CAPACITY SPEED BOUNDARY: capacity={capacity}")
+                break
             if capacity == 32768 and not any(
                 item["target_prompt_tokens"] >= 8192
                 and item["qualifies_for_minimum_tps"]

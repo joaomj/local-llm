@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-CONTRACT = "llama_server_capacity_and_prompt-v1"
+CONTRACT = "llama_server_capacity_and_prompt-v3"
 DEFAULT_MIN_FREE_BYTES = 30 * 1024**3
 DEFAULT_MIN_FREE_PERCENT = 15
 
@@ -99,7 +99,8 @@ class Config:
         return cls(
             manifest=Path(
                 os.environ.get(
-                    "THROUGHPUT_MANIFEST", ROOT / "scripts" / "throughput-models.tsv"
+                    "THROUGHPUT_MANIFEST",
+                    ROOT / "benchmarks" / "manifests" / "throughput-models.tsv",
                 )
             ).expanduser(),
             benchmark_root=Path(
@@ -246,6 +247,7 @@ def completion_key(
         "generation_tokens": os.environ.get(
             "LLAMA_SERVER_BENCHMARK_GENERATION_TOKENS", ""
         ),
+        "repetitions": os.environ.get("LLAMA_SERVER_BENCHMARK_REPETITIONS", "3"),
         "minimum_generation_tps": os.environ.get(
             "LLAMA_SERVER_BENCHMARK_MIN_GENERATION_TPS", "50"
         ),

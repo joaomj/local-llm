@@ -1,155 +1,116 @@
-# Local LLM: LFM2.5-8B-A1B on Apple Silicon
+# Local LLM Benchmarks
 
-Run Liquid AI's LFM2.5-8B-A1B locally with web search, and measure its performance. The project targets macOS on Apple Silicon (tested on a Mac Mini M4, 16GB).
+Compare local GGUF models on Apple Silicon. The repository measures real
+`llama-server` throughput, local chat quality, and low-level cache behavior.
 
-The model is a Mixture-of-Experts LLM with 8B total parameters and about 1.5B active parameters per token. It runs in the official 8-bit MLX format.
+## Results
 
-## What is included
+The current findings are in
+[`docs/reports/2026-08-23-gguf-throughput-quality.md`](docs/reports/2026-08-23-gguf-throughput-quality.md).
 
-| File | Purpose |
-|---|---|
-| `chat.py` | Terminal chat client with Exa web search and per-turn metrics |
-| `bench.py` | Repeated-trials benchmark with median and p95 metrics |
-| `OPENCODE.md` | Use the endpoint as a model provider in opencode |
-| `REPORT.md` | Full performance report and 4-bit quality research |
+The short result is:
+
+- Select LFM2.5 1.2B QAD Q4 for speed and judged chat quality.
+- Retain Gemma E2B QAT Q2 for long-context use.
+- Treat Gemma quality as partial because 11 of 80 answers repeat until the output limit.
 
 ## Requirements
 
-- macOS with Apple Silicon
-- 16GB RAM or more
+- macOS on Apple Silicon
 - Homebrew
-- `uv` (Python package manager)
-- An Exa API key (https://exa.ai) for web search
+- `uv`
+- `llama-server` from `llama.cpp`
+- Hugging Face CLI `hf` for model downloads
+- `OPENROUTER_API_KEY` for quality judging
 
-## Setup
-
-### 1. Install the MLX tools
-
-```bash
-uv tool install mlx-lm
-uv tool install huggingface_hub
-```
-
-### 2. Download the model
-
-The official 8-bit MLX weights live on Hugging Face: https://huggingface.co/LiquidAI/LFM2.5-8B-A1B-MLX-8bit
-
-They download on first server start. To pre-download them:
-
-```bash
-hf download LiquidAI/LFM2.5-8B-A1B-MLX-8bit
-```
-
-### 3. Set the Exa API key
-
-```bash
-export EXA_API_KEY=your-key-here
-```
-
-The chat client also reads the key from a `.env` file in the project root (`EXA_API_KEY=...`).
-
-### 4. Start the model server
-
-```bash
-mlx_lm.server --model LiquidAI/LFM2.5-8B-A1B-MLX-8bit \
-  --host 127.0.0.1 --port 8080 \
-  --max-tokens 4096
-```
-
-The `--max-tokens` flag is important. The server default is 512. This model reasons before answering, so the default truncates responses.
-
-## Usage
-
-### Chat with web search
-
-```bash
-uv run chat.py
-```
-
-The model searches the web through the Exa API when the question needs current information.
-
-### Run the benchmark
-
-```bash
-uv run bench.py --trials 10
-```
-
-The benchmark prints median and p95 for time to first token, generation speed, and prompt processing speed. Results also save to `bench_raw.json`.
-
-### Search server throughput
-
-Use the server-throughput search to compare ordered GGUF quantizations. Install
-`llama-server` before a real run:
+Install the local tools:
 
 ```bash
 brew install llama.cpp
+uv sync
 ```
 
-Review the Gemma E2B QAT search without a download or server start:
+## Throughput Search
+
+Review a family without downloading models or starting a server:
 
 ```bash
 uv run --project . python scripts/throughput_context_search.py \
   --dry-run --family gemma4-e2b-it-qat
 ```
 
-Run the historical Gemma E2B QAT Q4 baseline:
+Run the family search:
 
 ```bash
 uv run --project . python scripts/throughput_context_search.py \
-  --model gemma4-e2b-it-qat-ud-q4-k-xl
+  --family gemma4-e2b-it-qat
 ```
 
-The result keeps two measurements separate:
+The search uses the manifest in
+`benchmarks/manifests/throughput-models.tsv`. It tries higher-quality
+quantizations first. It stops at the first candidate that meets both gates:
 
-- Configured context capacity for a short request
-- Actual prompt tokens for a multi-turn tool conversation
+- `32768` or more configured context tokens
+- `50` or more generation tokens per second for short and occupied requests
 
-Both measurements use a minimum generation speed of `50` tokens per second.
-The minimum configured capacity is `32768` tokens. Results are in
-`.benchmark/throughput-server/`.
+The workflow keeps downloaded weights. It stops before a download when free
+storage is below 30 GiB or 15 percent. It does not remove weights.
 
-The workflow keeps all downloaded weights. Before each download, it checks free
-storage. It stops if free storage is less than 30 GiB or 15 percent. The
-operator must then choose which model weights to keep.
+## Quality Test
 
-`scripts/llama_benchmark.py` remains available for low-level KV-cache
-diagnostics. It does not select the production server capacity.
-
-### Compare LFM2.5 QAD checkpoints
-
-The repository also contains a sequential QAD comparison workflow for the four
-official LFM2.5 QAD Q4_0 GGUF files. It downloads and processes one model at a
-time, then removes only its workflow-owned internal scratch directory. It does
-not use Touro or the existing local model cache.
-
-Review the plan without starting downloads or inference:
+Start `llama-server` with a retained model. Generate the two-turn answers:
 
 ```bash
-bash scripts/lfm-qad-benchmark.sh --dry-run
+uv run --project . python scripts/mt_bench_answers.py \
+  --model-id MODEL_ID \
+  --questions benchmarks/mt-bench/question.jsonl \
+  --output .benchmark/quality-results/MODEL_ID/answers.jsonl \
+  --server-url http://127.0.0.1:18081/v1 \
+  --temperature 0.1 \
+  --max-tokens 1024
 ```
 
-Before a real run, make sure `hf`, `llama-bench`, `llama-server`, `uv`,
-`jq`, and `curl` are installed. Put `OPENROUTER_API_KEY` in the environment or
-the repository `.env` file. The long-running workflow is:
+Judge the saved answers:
 
 ```bash
-bash scripts/lfm-qad-benchmark.sh
+uv run --project . python scripts/mt_bench_batch_judge.py \
+  --answers .benchmark/quality-results/MODEL_ID/answers.jsonl \
+  --questions benchmarks/mt-bench/question.jsonl \
+  --output .benchmark/quality-results/MODEL_ID/judgments.jsonl \
+  --dotenv .env \
+  --batch-model google/gemini-3.7-flash:batch
 ```
 
-The same command also builds the final JSON and Markdown comparison report
-under `results/lfm-qad/`. Temporary benchmark state, model files, answers, and
-judgments stay under the project-local `.benchmark/` directory.
+The answer generator resumes existing records. The judge rejects truncated
+answers. Keep incomplete results separate from valid scores.
 
-## Use the endpoint in opencode
+## Verification
 
-The server exposes an OpenAI-compatible API on `http://127.0.0.1:8080/v1`. See `OPENCODE.md` for the provider configuration.
+Run the offline test suite:
 
-## Performance snapshot
+```bash
+uv run --project . python -m unittest discover -s tests
+bash tests/lfm-qad-benchmark-test.sh
+uv run --project . ruff format --check .
+uv run --project . ruff check .
+uv run --project . ty check
+```
 
-Measured on Mac Mini M4 (16GB), official 8-bit MLX weights:
+## Repository Layout
 
-- Generation: 44-47 tokens/s
-- Time to first token: 0.13s (small prompt), 2.1s (after web search)
-- Peak memory: 9.3GB
+| Path | Purpose |
+|---|---|
+| `scripts/` | Benchmark runners and quality tools |
+| `benchmarks/manifests/` | Model and quantization manifests |
+| `benchmarks/mt-bench/` | The quality question set |
+| `benchmarks/reference/` | Published benchmark context |
+| `docs/` | Guides, current findings, and historical reports |
+| `.benchmark/` | Ignored local weights and runtime data |
+| `results/` | Generated reports |
+| `tests/` | Offline tests |
 
-See `REPORT.md` for the full report and the 4-bit quantization analysis.
+The root `chat.py` and `bench.py` files provide the older MLX web-search chat
+workflow. See `docs/archive/2026-08-17-mlx-performance.md` for its historical
+results. That workflow is separate from the current GGUF evaluation.
+
+See [`docs/benchmarking.md`](docs/benchmarking.md) for the full workflow.

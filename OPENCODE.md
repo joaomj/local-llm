@@ -1,50 +1,57 @@
-# Use the local MLX model as an opencode provider
+# Use A Local Server In OpenCode
 
-This document explains how to use the local mlx-lm inference endpoint as a model provider in opencode.
+This guide connects OpenCode to a local OpenAI-compatible server. The current
+benchmark workflow uses `llama-server` with retained GGUF weights.
 
-## Prerequisites
+## Start The Server
 
-Start the MLX server before you start opencode:
+Set the model path and model ID for the retained model that you want to use:
 
 ```bash
-mlx_lm.server --model LiquidAI/LFM2.5-8B-A1B-MLX-8bit \
-  --host 127.0.0.1 --port 8080 \
-  --max-tokens 4096
+export LOCAL_MODEL_PATH="$PWD/.benchmark/throughput-models/gemma-4-E2B-it-qat-UD-Q2_K_XL/gemma-4-E2B-it-qat-UD-Q2_K_XL.gguf"
+export LOCAL_MODEL_ID="gemma4-e2b-it-qat-ud-q2-k-xl"
 ```
 
-The `--max-tokens` flag matters. The server default is 512 tokens. Without the flag, opencode responses stop after 512 tokens. The model is a reasoning model, so thinking tokens reduce the room for the final answer.
+Start the server:
 
-## 1. Add the provider to your config
-
-Add this block to the `provider` section of your opencode config.
-
-Global config (all projects):
-
-```jsonc
-~/.config/opencode/opencode.jsonc
+```bash
+llama-server \
+  --model "$LOCAL_MODEL_PATH" \
+  --alias "$LOCAL_MODEL_ID" \
+  --ctx-size 131072 \
+  --flash-attn on \
+  --parallel 1 \
+  --host 127.0.0.1 \
+  --port 8080
 ```
 
-Project config (this project only):
+Check the model ID:
 
-```jsonc
-opencode.jsonc
+```bash
+curl -s http://127.0.0.1:8080/v1/models
 ```
+
+The alias in the response must match `LOCAL_MODEL_ID`.
+
+## Configure OpenCode
+
+Add this provider block to `~/.config/opencode/opencode.jsonc`:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "mlx": {
+    "local": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "MLX (local)",
+      "name": "Local llama-server",
       "options": {
         "baseURL": "http://127.0.0.1:8080/v1"
       },
       "models": {
-        "LiquidAI/LFM2.5-8B-A1B-MLX-8bit": {
-          "name": "LFM2.5-8B-A1B (local)",
+        "gemma4-e2b-it-qat-ud-q2-k-xl": {
+          "name": "Gemma E2B QAT Q2",
           "limit": {
-            "context": 128000,
+            "context": 131072,
             "output": 4096
           }
         }
@@ -54,46 +61,21 @@ opencode.jsonc
 }
 ```
 
-Field notes:
+Replace the model key and name when you start a different retained model.
+The key must match the server alias.
 
-- `mlx` is the provider ID. It can be any string.
-- `npm` must be `@ai-sdk/openai-compatible`. The mlx server speaks the OpenAI API.
-- `options.baseURL` must point at the mlx server. Keep the `/v1` suffix.
-- The model key must match the `id` returned by `GET /v1/models`. Check with:
-
-  ```bash
-  curl -s http://127.0.0.1:8080/v1/models
-  ```
-
-- No API key is needed. The mlx server does not require one.
-
-## 2. Restart opencode
-
-opencode loads its config once at startup. Quit opencode and start it again after you save the config.
-
-## 3. Select the model
-
-Run `/models` inside opencode and choose `MLX (local)`.
-
-The full model ID is `mlx/LiquidAI/LFM2.5-8B-A1B-MLX-8bit`.
-
-To make it the default model, add to your config:
-
-```jsonc
-"model": "mlx/LiquidAI/LFM2.5-8B-A1B-MLX-8bit"
-```
-
-## Behavior notes
-
-- The model is a reasoning model. Its thinking output appears in opencode as reasoning content.
-- Tool calling works. opencode sends its tools to the server, and the model calls them.
-- Generation speed is 44-47 tokens per second on this hardware. Large tasks run slowly.
+Restart OpenCode after a configuration change. Select the model through
+`/models`.
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
+| Symptom | Cause | Action |
 |---|---|---|
-| `Connection refused` or empty model list | Server not running | Start `mlx_lm.server` before opencode |
-| Response stops mid-sentence | Server token cap | Start the server with `--max-tokens 4096` |
-| Model missing from `/models` | Model key mismatch | Match the model key to the `id` from `/v1/models` |
-| Config changes have no effect | opencode did not restart | Quit opencode and start it again |
+| Connection refused | The server is stopped | Start `llama-server` |
+| Empty model list | The server is not ready | Check the server log and call `/v1/models` |
+| Model not found | The alias differs from the config key | Use the exact alias from `/v1/models` |
+| Response stops early | The output limit is too small | Increase the server or OpenCode output limit |
+
+The selected Gemma model passes the throughput gate at 131K configured context
+tokens. Its quality evaluation has 11 truncated or repeating answers. See the
+current findings report before using it as the default model.

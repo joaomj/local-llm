@@ -41,6 +41,8 @@ with open(os.environ["FAKE_SERVER_INVOCATIONS"], "a", encoding="utf-8") as handl
     handle.write(json.dumps({"capacity": args.ctx_size, "arguments": unknown}) + "\n")
 
 class Handler(BaseHTTPRequestHandler):
+    prompt_counts = {}
+
     def send_json(self, status, value):
         encoded = json.dumps(value).encode()
         self.send_response(status)
@@ -65,19 +67,28 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "not found"})
             return
         messages = payload["messages"]
-        prompt_n = sum(len(str(message.get("content", "")).split()) for message in messages) + 32
-        if prompt_n > 1000:
+        actual_prompt_n = sum(len(str(message.get("content", "")).split()) for message in messages) + 32
+        if actual_prompt_n > 1000:
             roles = {message["role"] for message in messages}
             has_tool_call = any(message.get("tool_calls") for message in messages)
             if "tool" not in roles or not has_tool_call:
                 self.send_json(400, {"error": "missing tool transcript"})
                 return
-        speed = 55.0 if prompt_n <= 9000 else 45.0
+        prompt_key = "occupied" if actual_prompt_n > 1000 else "short"
+        prompt_count = self.prompt_counts.get(prompt_key, 0)
+        self.prompt_counts[prompt_key] = prompt_count + 1
+        evaluated_prompt_n = actual_prompt_n if prompt_count == 0 else 1
+        speed = 55.0 if actual_prompt_n <= 9000 else 45.0
         predicted_n = payload["max_tokens"]
         self.send_json(200, {
             "choices": [{"message": {"role": "assistant", "content": "benchmark response"}}],
+            "usage": {
+                "prompt_tokens": actual_prompt_n,
+                "completion_tokens": predicted_n,
+                "prompt_tokens_details": {"cached_tokens": actual_prompt_n - evaluated_prompt_n},
+            },
             "timings": {
-                "prompt_n": prompt_n,
+                "prompt_n": evaluated_prompt_n,
                 "prompt_per_second": 200.0,
                 "predicted_n": predicted_n,
                 "predicted_per_second": speed,
@@ -101,6 +112,7 @@ ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
                     "LLAMA_SERVER_BENCHMARK_CAPACITIES": "32768,49152",
                     "LLAMA_SERVER_BENCHMARK_PROMPT_TARGETS": "8192,16384",
                     "LLAMA_SERVER_BENCHMARK_GENERATION_TOKENS": "32",
+                    "LLAMA_SERVER_BENCHMARK_REPETITIONS": "3",
                     "LLAMA_SERVER_BENCHMARK_ROOT": str(root / "results"),
                     "LLAMA_SERVER_BENCHMARK_STARTUP_TIMEOUT_SECONDS": "5",
                     "LLAMA_SERVER_BENCHMARK_REQUEST_TIMEOUT_SECONDS": "5",
@@ -123,7 +135,7 @@ ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
                 (root / "results" / "summary.json").read_text(encoding="utf-8")
             )
             self.assertEqual(
-                summary["measurement_contract"], "llama_server_capacity_and_prompt-v1"
+                summary["measurement_contract"], "llama_server_capacity_and_prompt-v3"
             )
             self.assertEqual(
                 summary["largest_passing_configured_context_tokens"], 49152
@@ -143,6 +155,18 @@ ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
                 all(item["configured_context_tokens"] >= 32768 for item in occupied)
             )
             self.assertTrue(all(item["actual_prompt_tokens"] > 0 for item in occupied))
+            self.assertTrue(
+                all(
+                    item["actual_prompt_tokens"] > item["evaluated_prompt_tokens"]
+                    for item in occupied
+                )
+            )
+            self.assertTrue(
+                all(
+                    len(item["generation_samples_tokens_per_second"]) == 3
+                    for item in summary["measurements"]
+                )
+            )
             server_runs = [
                 json.loads(line)
                 for line in invocations.read_text(encoding="utf-8").splitlines()
@@ -153,6 +177,35 @@ ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
             )
             self.assertTrue(
                 all("--parallel" in item["arguments"] for item in server_runs)
+            )
+
+            environment.update(
+                {
+                    "LLAMA_SERVER_BENCHMARK_MAX_CONTEXT": "32768",
+                    "LLAMA_SERVER_BENCHMARK_CAPACITIES": "32768",
+                    "LLAMA_SERVER_BENCHMARK_PROMPT_TARGETS": "8192",
+                    "LLAMA_SERVER_BENCHMARK_MIN_GENERATION_TPS": "56",
+                    "LLAMA_SERVER_BENCHMARK_ROOT": str(root / "failing-results"),
+                }
+            )
+            failing_result = subprocess.run(
+                [sys.executable, str(RUNNER)],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+
+            self.assertEqual(failing_result.returncode, 0, failing_result.stderr)
+            failing_summary = json.loads(
+                (root / "failing-results" / "summary.json").read_text(encoding="utf-8")
+            )
+            self.assertFalse(failing_summary["minimum_requirement_met"])
+            self.assertEqual(
+                [item["scenario"] for item in failing_summary["measurements"]],
+                ["short", "tool_conversation"],
             )
 
 
