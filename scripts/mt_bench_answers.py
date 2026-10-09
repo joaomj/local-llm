@@ -118,6 +118,7 @@ def generate_question(
     model_name: str,
     temperature: float,
     max_tokens: int,
+    record_model_id: str | None = None,
 ) -> dict[str, Any]:
     messages: list[dict[str, str]] = []
     turns: list[str] = []
@@ -150,7 +151,7 @@ def generate_question(
     return {
         "question_id": question["question_id"],
         "answer_id": str(uuid.uuid4()),
-        "model_id": model_name,
+        "model_id": record_model_id or model_name,
         "choices": [{"index": 0, "turns": turns}],
         "tstamp": time.time(),
         "generation": {
@@ -178,6 +179,7 @@ def run(
     temperature: float,
     max_tokens: int,
     timeout: float,
+    record_model_id: str | None = None,
 ) -> int:
     questions = load_questions(questions_path)
     answers = load_existing_answers(output_path)
@@ -212,6 +214,7 @@ def run(
                 model_name,
                 temperature,
                 max_tokens,
+                record_model_id,
             )
             answers[question_id] = answer
             dump_answer(handle, answer)
@@ -225,6 +228,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model-id", required=True, help="Model identifier stored in answer records"
+    )
+    parser.add_argument(
+        "--request-model",
+        help="Model name sent to the server; defaults to --model-id",
     )
     parser.add_argument("--questions", type=Path, default=DEFAULT_QUESTIONS)
     parser.add_argument("--output", type=Path)
@@ -251,10 +258,11 @@ def main() -> int:
             questions_path=args.questions,
             output_path=args.output,
             server_url=args.server_url,
-            model_name=args.model_id,
+            model_name=args.request_model or args.model_id,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
             timeout=args.timeout,
+            record_model_id=args.model_id,
         )
     except (APIError, OSError, ValueError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)

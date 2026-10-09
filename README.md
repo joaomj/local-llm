@@ -3,12 +3,12 @@
 Compare local GGUF models on Apple Silicon. The repository measures real
 `llama-server` throughput, local chat quality, and low-level cache behavior.
 
-## Results
+## Recorded Results
 
 The current findings are in
 [`docs/reports/2026-08-23-gguf-throughput-quality.md`](docs/reports/2026-08-23-gguf-throughput-quality.md).
 
-The short result is:
+The recorded comparison recommends:
 
 - Select LFM2.5 1.2B QAD Q4 for speed and judged chat quality.
 - Retain Gemma E2B QAT Q2 for long-context use.
@@ -84,16 +84,27 @@ uv run --project . python scripts/mt_bench_batch_judge.py \
 The answer generator resumes existing records. The judge rejects truncated
 answers. Keep incomplete results separate from valid scores.
 
+## Ornith Evaluation
+
+The staged Ornith workflow compares 9B GGUF and MLX candidates against the
+recorded LFM baseline. See [the benchmarking guide](docs/benchmarking.md#ornith-evaluation)
+for setup, cost, cleanup behavior, and limitations. New manifests do not imply
+that those candidates have measured results.
+
+Model weights belong in local storage or a model registry, not GitHub. Git
+ignores `models/`, `.benchmark/`, common weight formats, and generated results.
+
 ## Verification
 
+Install `ruff` and `ty` separately for formatting, lint, and type checks.
 Run the offline test suite:
 
 ```bash
 uv run --project . python -m unittest discover -s tests
 bash tests/lfm-qad-benchmark-test.sh
-uv run --project . ruff format --check .
-uv run --project . ruff check .
-uv run --project . ty check
+ruff format --check .
+ruff check .
+ty check
 ```
 
 ## Repository Layout

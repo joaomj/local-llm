@@ -19,6 +19,7 @@ import time
 from openai import OpenAI
 
 import chat
+from scripts.benchmark_conversation import build_tool_conversation
 
 TRIALS = 10
 
@@ -31,6 +32,7 @@ PLAIN_PROMPTS = [
 SEARCH_PROMPT = (
     "Who won the last men's Wimbledon final and what was the score? Use web search."
 )
+OCCUPIED_TARGET_TOKENS = 8192
 
 
 def collect_call(client: OpenAI, messages: list, label: str, scenario: str) -> dict:
@@ -140,6 +142,16 @@ def run_turn(client: OpenAI, prompt: str, scenario: str, trial_id: int) -> list[
     return calls
 
 
+def run_occupied(client: OpenAI, trial_id: int) -> list[dict]:
+    messages, _ = build_tool_conversation(
+        OCCUPIED_TARGET_TOKENS,
+        lambda text: len(text.split()),
+    )
+    call = collect_call(client, messages, "first-call", "occupied")
+    call["trial_id"] = trial_id
+    return [call]
+
+
 def summarize(rows: list[dict], scenario: str, label: str) -> dict:
     def q(p, key):
         vals = sorted(r[key] for r in rows)
@@ -184,29 +196,54 @@ def summarize(rows: list[dict], scenario: str, label: str) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--trials", type=int, default=TRIALS)
+    parser.add_argument(
+        "--scenarios",
+        nargs="+",
+        choices=("plain", "search", "occupied"),
+        default=("plain", "search"),
+    )
     args = parser.parse_args()
 
     client = OpenAI(base_url=chat.SERVER_URL, api_key="local")
     all_rows = []
 
-    for i in range(args.trials):
-        prompt = PLAIN_PROMPTS[i % len(PLAIN_PROMPTS)]
-        all_rows.extend(run_turn(client, prompt, "plain", i))
-        print(f"trial {i + 1}/{args.trials}: plain done", file=sys.stderr, flush=True)
+    if "plain" in args.scenarios:
+        for i in range(args.trials):
+            prompt = PLAIN_PROMPTS[i % len(PLAIN_PROMPTS)]
+            all_rows.extend(run_turn(client, prompt, "plain", i))
+            print(
+                f"trial {i + 1}/{args.trials}: plain done",
+                file=sys.stderr,
+                flush=True,
+            )
 
-    for i in range(args.trials):
-        all_rows.extend(run_turn(client, SEARCH_PROMPT, "search", i))
-        print(f"trial {i + 1}/{args.trials}: search done", file=sys.stderr, flush=True)
+    if "search" in args.scenarios:
+        for i in range(args.trials):
+            all_rows.extend(run_turn(client, SEARCH_PROMPT, "search", i))
+            print(
+                f"trial {i + 1}/{args.trials}: search done",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    if "occupied" in args.scenarios:
+        for i in range(args.trials):
+            all_rows.extend(run_occupied(client, i))
+            print(
+                f"trial {i + 1}/{args.trials}: occupied done",
+                file=sys.stderr,
+                flush=True,
+            )
 
     report = []
-    for scenario in ("plain", "search"):
+    for scenario in args.scenarios:
         for label in ("first-call", "answer"):
             rows = [
                 r for r in all_rows if r["scenario"] == scenario and r["label"] == label
             ]
             if rows:
                 report.append(summarize(rows, scenario, label))
-    for scenario in ("plain", "search"):
+    for scenario in args.scenarios:
         turns = []
         for trial_id in range(args.trials):
             rows = [

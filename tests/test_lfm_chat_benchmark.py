@@ -11,11 +11,34 @@ from scripts.lfm_chat_benchmark import (
     ModelSpec,
     finalize_model_scratch,
     invalidate_stale_judgments,
+    prepare_model,
     write_quality_report,
 )
 
 
 class LfmChatBenchmarkTest(unittest.TestCase):
+    def test_reuses_throughput_weight_without_duplicate_storage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "throughput"
+            scratch_root = root / "quality"
+            model = ModelSpec("model-a", "Org/Repo", "model.gguf", 32768, "model")
+            source_file = source_root / model.model_directory / model.file_name
+            source_file.parent.mkdir(parents=True)
+            source_file.write_bytes(b"weights")
+            config = {
+                "scratch_root": scratch_root,
+                "source_root": source_root,
+                "download_attempts": 1,
+            }
+
+            prepared = prepare_model(config, model)
+
+            self.assertEqual(prepared.read_bytes(), b"weights")
+            self.assertEqual(prepared.stat().st_ino, source_file.stat().st_ino)
+            finalize_model_scratch(config, model, succeeded=True)
+            self.assertTrue(source_file.exists())
+
     def test_retains_model_scratch_until_run_succeeds(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             scratch_root = Path(directory)

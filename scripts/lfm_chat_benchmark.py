@@ -105,6 +105,7 @@ def env_float(name: str, default: float, minimum: float = 0.0) -> float:
 
 
 def config() -> dict[str, Any]:
+    source_root = os.environ.get("LFM_CHAT_QUALITY_SOURCE_ROOT")
     return {
         "benchmark_root": Path(
             os.environ.get("LFM_CHAT_QUALITY_ROOT", DEFAULT_BENCHMARK_ROOT)
@@ -112,6 +113,7 @@ def config() -> dict[str, Any]:
         "scratch_root": Path(
             os.environ.get("LFM_CHAT_QUALITY_SCRATCH_ROOT", DEFAULT_SCRATCH_ROOT)
         ),
+        "source_root": Path(source_root) if source_root else None,
         "report_root": Path(
             os.environ.get("LFM_CHAT_QUALITY_REPORT_ROOT", DEFAULT_REPORT_ROOT)
         ),
@@ -542,6 +544,22 @@ def prepare_model(config_values: dict[str, Any], model: ModelSpec) -> Path:
     ):
         log(f"DOWNLOAD SKIP: {model.model_id}")
         return expected_file
+    source_root = config_values.get("source_root")
+    if source_root is not None:
+        source_file = (
+            Path(source_root).resolve() / model.model_directory / model.file_name
+        )
+        if (
+            source_file.is_file()
+            and not source_file.is_symlink()
+            and source_file.stat().st_size > 0
+        ):
+            try:
+                os.link(source_file, expected_file)
+            except OSError as error:
+                fail(f"could not reuse the throughput GGUF: {source_file}: {error}")
+            log(f"WEIGHT REUSE: {model.model_id} source={source_file}")
+            return expected_file
     for attempt in range(1, config_values["download_attempts"] + 1):
         log(
             f"DOWNLOAD: {model.model_id} attempt={attempt}/{config_values['download_attempts']}"

@@ -95,6 +95,7 @@ class Config:
                 "LLAMA_SERVER_BENCHMARK_MODEL_PATH and LLAMA_SERVER_BENCHMARK_MODEL_ID are required"
             )
         maximum = env_int("LLAMA_SERVER_BENCHMARK_MAX_CONTEXT", 131072, 32768)
+        capacities_configured = os.environ.get("LLAMA_SERVER_BENCHMARK_CAPACITIES")
         capacities = sorted(
             {
                 value
@@ -106,7 +107,7 @@ class Config:
         )
         if 32768 not in capacities:
             capacities.insert(0, 32768)
-        if maximum not in capacities:
+        if capacities_configured is None and maximum not in capacities:
             capacities.append(maximum)
         return cls(
             server_bin=os.environ.get("LLAMA_SERVER_BENCHMARK_BIN", "llama-server"),
@@ -124,7 +125,7 @@ class Config:
             generation_tokens=env_int(
                 "LLAMA_SERVER_BENCHMARK_GENERATION_TOKENS", 128, 1
             ),
-            repetitions=env_int("LLAMA_SERVER_BENCHMARK_REPETITIONS", 3, 3),
+            repetitions=env_int("LLAMA_SERVER_BENCHMARK_REPETITIONS", 3, 1),
             output_reserve=env_int("LLAMA_SERVER_BENCHMARK_OUTPUT_RESERVE", 2048, 256),
             minimum_tps=env_int("LLAMA_SERVER_BENCHMARK_MIN_GENERATION_TPS", 50, 1),
             benchmark_root=Path(

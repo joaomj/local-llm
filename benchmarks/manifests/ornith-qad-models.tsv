@@ -1,0 +1,5 @@
+# id	hugging_face_repo	file	maximum_context_tokens	model_directory
+ornith-9b-q4_k_m	ornith-ai/Ornith-1.5-9B-GGUF	Ornith-1.5-9B-Q4_K_M.gguf	65536	Ornith-1.5-9B-Q4_K_M
+ornith-9b-q5_k_m	ornith-ai/Ornith-1.5-9B-GGUF	Ornith-1.5-9B-Q5_K_M.gguf	65536	Ornith-1.5-9B-Q5_K_M
+ornith-9b-q6_k	ornith-ai/Ornith-1.5-9B-GGUF	Ornith-1.5-9B-Q6_K.gguf	65536	Ornith-1.5-9B-Q6_K
+ornith-9b-q8_0	ornith-ai/Ornith-1.5-9B-GGUF	Ornith-1.5-9B-Q8_0.gguf	65536	Ornith-1.5-9B-Q8_0

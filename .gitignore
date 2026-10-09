@@ -3,20 +3,34 @@
 __pycache__/
 *.py[cod]
 
-# Secrets
+# Secrets and local configuration
 .env
+.env.*
 
-# Runtime artifacts
-server.log
+# Model storage (use Hugging Face or local storage, not GitHub)
+/models/
+*.gguf
+*.ggml
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+*.h5
+*.npz
+*.npy
+
+# Runtime artifacts and generated results
 *.log
-
-# Results
-bench_raw.json
-bench_results.json
 *.json
+*.jsonl
 !benchmarks/reference/lfm-qad-published.json
-results/lfm-qad/
-.benchmark/
+!benchmarks/mt-bench/question.jsonl
+/results/
+/.benchmark/
+
+# Local planning artifacts
+/docs/plans/
 
 # macOS
 .DS_Store
